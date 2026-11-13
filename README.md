@@ -28,7 +28,8 @@ Vue3 (apps/web)
                         │
                         ▼
                  FastAPI 引擎 (apps/api)
-                 ├─ ingest   parse(±OCR) → chunk → embed → 落库 → 同步外部库
+                 ├─ ingest   parse(±MinerU/PaddleOCR) → chunk → embed → 落库 → 同步外部库
+                 │            └─ 原件留档：本地目录 ──or──▶ MinIO/S3
                  ├─ retrieve dense + BM25 + 图谱 → RRF(k=60) → 重排 → 压缩
                  ├─ agent    supervisor → plan → Send[] 并行 → worker → synthesize
                  │            └─ 引用守卫：越界重写 / 低置信度拒答
@@ -48,6 +49,7 @@ Vue3 (apps/web)
 | 换向量库要改多少 | `VectorStore` / `GraphStore` 两个 Protocol，local 与 Milvus/Neo4j 同签名 | 检索层只依赖协议，切库只改环境变量，不动业务代码 |
 | 租户怎么隔离 | 网关注入 `X-Tenant-Id`，服务端白名单净化后落到四张表，跨租户一律 404 | 403 等于告诉对方「这个 id 存在，只是不属于你」，本身就是信息泄露 |
 | 审计会不会丢 | 审计行和业务行同一次 commit | 先写业务再写日志，中间崩了就会出现「操作成功但没记录」 |
+| 原件要不要留 | 分块是派生数据，原始字节单独存（本地目录或 MinIO） | 用户在引用上点「看原文」时要的是原文件；只留分块，等于把证据丢了 |
 
 ## 实测
 
@@ -66,7 +68,7 @@ recall@5 = 1.00    mrr@5 = 0.92    faithfulness = 0.81    zero_hit = 0
 - 三路召回命中 2 条，分数里能看到 `dense / sparse / graph / rrf / rerank` 各自的值
 - 删库后两个外部库都归零（`scripts/live_cleanup.py` 断言）
 
-测试：后端 53 个用例（含 fakeredis 驱动的跨实例事件总线和可选的真实存储联调），网关 7 个用例，全部离线可跑。
+测试：后端 59 个用例（含 fakeredis 驱动的跨实例事件总线和可选的真实存储联调），网关 7 个用例，全部离线可跑。
 
 ## 快速开始
 
@@ -102,6 +104,20 @@ curl -s localhost:8017/api/system/backends           # 确认真的连上了
 ```
 
 没有容器环境也能验证：`pip install -e ".[stores-lite]"` 用 Milvus Lite，`tools/neo4j-embedded` 用 `neo4j-harness` 起进程内 Bolt，跑 `python -m scripts.live_check`。
+
+## 原件与扫描件
+
+上传的原始文件默认落在 `data/uploads`，也可以直接丢进 MinIO：`pip install -e ".[objects]"`，然后设 `NEXUS_OBJECT_BACKEND=s3` 与 `NEXUS_S3_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET`（compose 里的 minio 就是现成的）。`GET /api/kb/{id}/documents/{doc_id}/content` 取回原件，删文档时连同对象一起清。
+
+扫描件（PDF 无文字层、图片）交给 OCR：
+
+```bash
+NEXUS_OCR_BACKEND=mineru NEXUS_MINERU_BASE_URL=http://127.0.0.1:8888
+# 或 PP-StructureV3 serving：
+NEXUS_OCR_BACKEND=paddle NEXUS_PADDLE_BASE_URL=http://127.0.0.1:8080
+```
+
+两个后端都返回 markdown 再进分块器，所以表格和标题不会退化成一行行散字。
 
 ## 多实例与 PostgreSQL
 

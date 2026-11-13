@@ -70,12 +70,12 @@ def _parse_pdf(data: bytes, filename: str = "document.pdf") -> str:
 def _parse_scanned(filename: str, data: bytes, hint: str = "scanned document") -> str:
     if not ocr.ocr_enabled():
         raise ParseError(
-            f"{hint} — enable OCR with NEXUS_OCR_BACKEND=mineru (and NEXUS_MINERU_BASE_URL)"
+            f"{hint} - enable OCR with NEXUS_OCR_BACKEND=mineru or paddle"
         )
     try:
         return ocr.ocr_parse(filename, data)
     except ocr.OCRUnavailable as exc:
-        raise ParseError(f"{hint} — OCR failed: {exc}") from exc
+        raise ParseError(f"{hint} - OCR failed: {exc}") from exc
 
 
 def _parse_docx(data: bytes) -> str:

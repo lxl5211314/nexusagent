@@ -40,6 +40,7 @@ class Document(Base):
     mime: Mapped[str] = mapped_column(String(120), default="text/plain")
     size: Mapped[int] = mapped_column(Integer, default=0)
     checksum: Mapped[str] = mapped_column(String(64), default="")
+    object_key: Mapped[str] = mapped_column(String(512), default="")
     status: Mapped[str] = mapped_column(String(24), default="ready")  # ready | failed
     error: Mapped[str] = mapped_column(Text, default="")
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)

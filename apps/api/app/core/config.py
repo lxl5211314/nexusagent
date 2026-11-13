@@ -52,7 +52,8 @@ class Settings(BaseSettings):
     # --- Storage backends --------------------------------------------------
     vector_backend: str = "local"  # local | milvus
     graph_backend: str = "local"  # local | neo4j
-    ocr_backend: str = "none"  # none | mineru
+    ocr_backend: str = "none"  # none | mineru | paddle
+    object_backend: str = "local"  # local | s3
 
     milvus_uri: str = "http://127.0.0.1:19530"
     milvus_token: str = ""
@@ -67,11 +68,20 @@ class Settings(BaseSettings):
     mineru_api_key: str = ""
     mineru_timeout_s: float = 120.0
 
+    paddle_base_url: str = "http://127.0.0.1:8080"
+    paddle_timeout_s: float = 120.0
+
     # Empty means the in-process queue: single instance only. Set it to
     # redis://127.0.0.1:6379/0 to fan events out across processes.
     redis_url: str = ""
 
+    # S3/MinIO endpoint, credentials and bucket. Only read when
+    # object_backend=s3; local mode keeps raw files under data/uploads.
     s3_endpoint: str = ""
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    s3_bucket: str = "nexusagent"
+    s3_region: str = "us-east-1"
 
     def ensure_dirs(self) -> None:
         (self.data_dir / "uploads").mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,7 @@ from app.rag.embedding import get_embedder
 from app.rag.index import invalidate
 from app.rag.parsing import parse
 from app.rag.stores import VectorRecord, get_graph_store, get_vector_store
+from app.storage import document_key, get_object_store
 
 
 class DuplicateDocument(Exception):
@@ -53,6 +54,12 @@ def ingest_document(session: Session, kb_id: str, filename: str, data: bytes, mi
     )
     session.add(document)
     session.flush()
+
+    # Keep the bytes the user uploaded: citations and the download button point
+    # back at the original file, and a re-index must not need a second upload.
+    key = document_key(kb_id, document.id, filename)
+    get_object_store().put(key, data, mime or "application/octet-stream")
+    document.object_key = key
 
     for draft in drafts:
         session.add(

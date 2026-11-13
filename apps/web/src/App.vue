@@ -93,6 +93,22 @@ async function deleteDoc(docId) {
   await refreshDocs()
 }
 
+async function downloadDoc(doc) {
+  if (!activeKb.value) return
+  const r = await api(`/api/kb/${activeKb.value.id}/documents/${doc.id}/content`)
+  if (!r.ok) {
+    error.value = '原件未留存：这份文档是在留档功能上线前导入的'
+    return
+  }
+  const blob = await r.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = doc.filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 function stripMd(text) {
   return text
     .replace(/\*\*/g, '')
@@ -316,7 +332,10 @@ onMounted(() => { refreshKbs() })
         <div v-for="d in docs" :key="d.id" class="doc-item">
           <div class="fname">{{ d.filename }}</div>
           <div class="fmeta">{{ d.chunk_count }} 块 · {{ fmtSize(d.size) }}</div>
-          <button class="btn" @click="deleteDoc(d.id)" style="margin-top:2px;padding:2px 6px">删除</button>
+          <div style="display:flex;gap:4px;margin-top:2px">
+            <button class="btn" @click="downloadDoc(d)" style="padding:2px 6px">原件</button>
+            <button class="btn" @click="deleteDoc(d.id)" style="padding:2px 6px">删除</button>
+          </div>
         </div>
       </div>
       <p v-else class="sub">先创建或选择知识库</p>

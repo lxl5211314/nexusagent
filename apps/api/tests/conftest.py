@@ -13,6 +13,7 @@ from pathlib import Path
 # MUST run before importing app.* (engine is module-level, bound at import time).
 _TMPDIR = tempfile.mkdtemp(prefix="nexusagent-test-")
 os.environ.setdefault("NEXUS_DATABASE_URL", f"sqlite:///{(Path(_TMPDIR) / 'test.db').as_posix()}")
+os.environ.setdefault("NEXUS_DATA_DIR", _TMPDIR)
 os.environ.setdefault("NEXUS_LLM_PROVIDER", "mock")
 os.environ.setdefault("NEXUS_EMBEDDING_PROVIDER", "hash")
 

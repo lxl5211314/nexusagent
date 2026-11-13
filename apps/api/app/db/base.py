@@ -62,11 +62,25 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _ensure_tenant_columns()
+    _ensure_column("documents", "object_key", "VARCHAR(512) DEFAULT ''")
 
 
 # Columns added later: existing databases need a forward migration.
 # ``create_all`` only creates missing tables, it never alters an existing one.
 _TENANT_TABLES = ("knowledge_bases", "runs", "tool_invocations", "eval_runs")
+
+
+def _ensure_column(table: str, column: str, ddl: str) -> None:
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    if table not in set(inspector.get_table_names()):
+        return
+    present = {item["name"] for item in inspector.get_columns(table)}
+    if column in present:
+        return
+    with engine.begin() as conn:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
 def _ensure_tenant_columns() -> None:

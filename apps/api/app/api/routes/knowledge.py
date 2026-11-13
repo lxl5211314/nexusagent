@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.rag.index import invalidate
 from app.rag.ingest import DuplicateDocument, ingest_document
 from app.rag.stores import get_graph_store, get_vector_store
 from app.services import audit
+from app.storage import get_object_store
 
 router = APIRouter(prefix="/kb", tags=["knowledge"])
 
@@ -96,6 +97,7 @@ def delete_kb(
     db.delete(kb)
     db.commit()
     invalidate(kb_id)
+    get_object_store().delete_prefix(f"{kb_id}/")
     # External stores keep their own copies; drop them too or deleted corpora
     # would keep coming back in hybrid retrieval.
     if get_settings().vector_backend != "local":
@@ -147,6 +149,30 @@ def list_documents(
     return [_doc_out(doc) for doc in rows]
 
 
+@router.get("/{kb_id}/documents/{doc_id}/content")
+def download_document(
+    kb_id: str,
+    doc_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant),
+) -> Response:
+    _get_owned(db, kb_id, tenant_id)
+    doc = db.get(Document, doc_id)
+    if doc is None or doc.kb_id != kb_id:
+        raise HTTPException(404, "document not found")
+    if not doc.object_key:
+        raise HTTPException(404, "original file not stored for this document")
+    try:
+        data = get_object_store().get(doc.object_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "original file missing from storage") from exc
+    return Response(
+        content=data,
+        media_type=doc.mime or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{doc.filename}"'},
+    )
+
+
 @router.delete("/{kb_id}/documents/{doc_id}", status_code=204)
 def delete_document(
     kb_id: str,
@@ -169,6 +195,8 @@ def delete_document(
     db.delete(doc)
     db.commit()
     invalidate(kb_id)
+    obj = get_object_store()
+    obj.delete_prefix(f"{kb_id}/{doc_id}/")
     if get_settings().vector_backend != "local":
         get_vector_store().delete_document(kb_id, doc_id)
     if get_settings().graph_backend != "local":
