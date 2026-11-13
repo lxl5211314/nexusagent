@@ -26,6 +26,10 @@ const mcpTools = ref([])
 const mcpErrors = ref({})
 const skills = ref([])
 const toolFilter = ref('')
+const settingsOpen = ref(false)
+const settings = ref({ mcp_tool_router: true, mcp_cite_external: true })
+const mcpMeta = ref({ configured: false, timeout_s: 30 })
+const settingsSaving = ref(false)
 
 function setTenant(value) {
   tenant.value = value.trim() || 'local'
@@ -70,6 +74,31 @@ async function refreshTools(force = false) {
   mcpTools.value = payload.items || []
   mcpErrors.value = payload.errors || {}
   skills.value = cards.ok ? (await cards.json()).items : []
+}
+
+async function refreshSettings() {
+  const r = await api('/api/settings')
+  if (!r.ok) return
+  const body = await r.json()
+  settings.value = body.items
+  mcpMeta.value = body.mcp
+}
+
+async function toggleSetting(key) {
+  const next = !settings.value[key]
+  settingsSaving.value = true
+  try {
+    const r = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ [key]: next }) })
+    if (r.ok) settings.value = (await r.json()).items
+    else error.value = `保存失败：${r.status}`
+  } finally {
+    settingsSaving.value = false
+  }
+}
+
+function toggleSettings() {
+  settingsOpen.value = !settingsOpen.value
+  if (settingsOpen.value) refreshSettings()
 }
 
 function toggleTools() {
@@ -363,6 +392,7 @@ onMounted(() => { refreshKbs() })
       <div style="display:flex;gap:6px;margin-bottom:8px">
         <button class="btn" @click="refreshAudit" style="flex:1">审计日志</button>
         <button class="btn" @click="toggleTools" style="flex:1">工具与技能</button>
+        <button class="btn" @click="toggleSettings" style="flex:1">设置</button>
       </div>
       <div v-if="activeKb">
         <div class="upload">
@@ -411,6 +441,24 @@ onMounted(() => { refreshKbs() })
 
     <div class="panel">
       <h3>运行面板</h3>
+      <template v-if="settingsOpen">
+        <div class="trace-block">
+          <div class="head">运行时开关</div>
+          <label class="row toggle-row">
+            <input type="checkbox" :checked="settings.mcp_tool_router" :disabled="settingsSaving"
+                   @change="toggleSetting('mcp_tool_router')" />
+            <span>检索不足时调用只读 MCP 工具</span>
+          </label>
+          <label class="row toggle-row">
+            <input type="checkbox" :checked="settings.mcp_cite_external" :disabled="settingsSaving"
+                   @change="toggleSetting('mcp_cite_external')" />
+            <span>外部工具结果进入引用来源</span>
+          </label>
+          <div class="row" style="color:var(--muted)">
+            MCP 配置：{{ mcpMeta.configured ? '已加载' : '未配置' }} · 超时 {{ mcpMeta.timeout_s }}s
+          </div>
+        </div>
+      </template>
       <template v-if="toolsOpen">
         <div class="trace-block">
           <div class="head">

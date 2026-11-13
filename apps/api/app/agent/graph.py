@@ -27,7 +27,7 @@ from app.agent.state import AgentState, Finding
 from app.agent.tools import ToolContext, registry
 from app.core.config import get_settings
 from app.guard.citation import check_answer
-from app.rag.retriever import retrieve
+from app.rag.retriever import RetrievedChunk, retrieve
 
 
 def _emit(config: RunnableConfig, type_: str, payload: dict[str, Any]) -> None:
@@ -112,6 +112,7 @@ async def worker(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     else:
         summary = f"检索失败：{result.error}"
 
+    external_contexts: list[RetrievedChunk] = []
     if settings.mcp_tool_router and len(contexts) < 2:
         from app.mcp.catalog import get_catalog
         from app.mcp.router import enrich_with_mcp
@@ -120,14 +121,31 @@ async def worker(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         if extra is not None:
             choice, call = extra
             if call.ok:
-                text = str(call.data.get("text", ""))[:160] if isinstance(call.data, dict) else ""
-                summary += f"；外部工具 {choice.spec_name} 返回：{text}"
+                text = str(call.data.get("text", "")) if isinstance(call.data, dict) else ""
+                summary += f"；外部工具 {choice.spec_name} 返回：{text[:160]}"
+                # An external answer is evidence too: number it after the chunks so the
+                # citation guard can resolve [n] to it instead of rejecting the answer.
+                if settings.mcp_cite_external and text.strip():
+                    body = text.strip()[:600]
+                    external_contexts.append(
+                        RetrievedChunk(
+                            chunk_id=choice.spec_name,
+                            doc_id=f"mcp:{choice.server}",
+                            doc_name=choice.spec_name,
+                            ordinal=0,
+                            heading="外部工具",
+                            content=body,
+                            compressed=body,
+                            rank=0,
+                            scores={"rerank": 0.25, "external": 1.0},
+                        )
+                    )
             else:
                 summary += f"；外部工具 {choice.spec_name} 调用失败：{call.error[:80]}"
 
     return {
         "findings": [Finding(task_id=task.id, question=task.question, summary=summary)],
-        "contexts": contexts,
+        "contexts": contexts + external_contexts,
     }
 
 

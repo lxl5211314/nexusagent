@@ -174,6 +174,7 @@ curl localhost:8017/api/mcp/tools | jq '.items[] | {server, name, side_effect}'
 - **同一套门禁**。MCP 工具注册进 `ToolRegistry` 后，权限码是 `mcp:<server>`（写是 `mcp:<server>:write`），和内置工具走同一个 `invoke`。
 - **外部工具只在检索不够时插一脚**：子任务命中的片段少于 2 个，才按词面覆盖挑一个只读工具补一次外部信息；参数只填有默认值的，必填项没默认就跳过，宁可不用也不瞎调。调用一样走 `ToolRegistry`，事件里能看到 `tool.call` 和耗时。
 - **手点也一样留痕**：`POST /api/mcp/call` 无论成功、被门禁拦下还是上游报错，都会写一条 `mcp.call` 审计，带工具名、参数键和结果摘要。
+- **外部证据也能被引用**：工具返回的内容作为第 n+1 条来源进入上下文，和文档块一起编号，引用校验照样逐条回查——不是「模型说调过工具」就算数。开关在侧栏「设置」里，`GET/PUT /api/settings` 同步生效，重启后仍保留。
 
 Skill 是提示词侧的能力：一个目录一份 `SKILL.md`，front matter 写 `name` / `description`，正文是步骤。`GET /api/skills` 只列卡片，`GET /api/skills/{name}` 才返回正文——按需加载，不把全部提示词塞进上下文。
 

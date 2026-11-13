@@ -121,3 +121,7 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 调用同样经过 `ToolRegistry`，因此权限、审计、`tool.call` 事件和内置工具完全一致。手工调用走 `POST /api/mcp/call`，会写 `mcp.call` 审计；写工具仍然要 `approval_token`。
 
 `ensure_loaded()` 只在确实发现了 server 之后才置位，否则一次「配置还没加载」的空跑会让整个进程永远不注册 MCP 工具。
+
+外部证据的编号：工具返回正文后，worker 追加一个 `RetrievedChunk`（`chunk_id=mcp.<server>.<tool>`、`heading=外部工具`、`scores={"rerank":0.25,"external":1.0}`）到 contexts 尾部。这样引用校验不需要为外部源开特例——它天然落在 `1..len(contexts)` 内，UI 也能按 doc_name 显示来源。0.25 的 rerank 分让它对置信度的贡献有上限，不会因为「调了个工具」就把拒答阈值顶穿。
+
+两个开关落在 `app/core/runtime.py`：`mcp_tool_router` 控制要不要调，`mcp_cite_external` 控制结果要不要进来源。只有白名单里的键可改，写入 `data/runtime.json`，启动时 `apply_overrides()` 回灌到 settings 单例，避免为一个布尔值重启服务。

@@ -159,6 +159,7 @@ body {
 .status-badge.running { background: #2a3a1f; color: var(--warn); }
 .status-badge.completed { background: #1f3a2a; color: var(--ok); }
 .status-badge.failed { background: #3a1f1f; color: var(--err); }
+.toggle-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .tool-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
 .tool-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { font-size: 10px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); }

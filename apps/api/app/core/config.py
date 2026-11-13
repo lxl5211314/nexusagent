@@ -81,6 +81,8 @@ class Settings(BaseSettings):
     mcp_timeout_s: float = 30.0
     # Let a subtask that retrieval could not answer consult a read-only MCP tool.
     mcp_tool_router: bool = True
+    # When the external tool answers, append it to the sources so the answer can cite it.
+    mcp_cite_external: bool = True
     # Directory of <name>/SKILL.md cards; empty means none.
     skills_dir: str = ""
 

@@ -15,8 +15,10 @@ from app.api.routes import (
     extensions,
     health,
     knowledge,
+    settings_routes,
     system,
 )
+from app.core import runtime
 from app.db.base import init_db
 
 STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -32,6 +34,7 @@ def create_app() -> FastAPI:
     )
 
     init_db()
+    runtime.apply_overrides()
 
     app.include_router(health.router)
     app.include_router(knowledge.router, prefix="/api")
@@ -40,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(system.router, prefix="/api")
     app.include_router(audit_routes.router, prefix="/api")
     app.include_router(extensions.router, prefix="/api")
+    app.include_router(settings_routes.router, prefix="/api")
 
     if STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="web")
