@@ -77,7 +77,7 @@ recall@5 = 1.00    mrr@5 = 0.92    faithfulness = 0.81    zero_hit = 0
 ```bash
 cd apps/api
 pip install -e .
-python -m app.seed            # 灌入示例知识库与评估集
+python -m app.seed            # 灌入示例知识库
 uvicorn app.main:app --port 8017
 
 cd ../web
