@@ -1,0 +1,27 @@
+{"question": "NexusAgent 解决的核心问题是什么？", "gold": ["员工检索困难", "答案没有来源"], "gold_answer": "企业文档分散、员工检索困难、答案没有来源、AI 生成内容不可信。"}
+{"question": "平台支持哪些文档格式？", "gold": ["YAML", "Word"], "gold_answer": "Markdown、TXT、CSV、JSON、YAML、日志、PDF、Word。"}
+{"question": "Agentic RAG 的闭环包含哪几个环节？", "gold": ["检索 — 推理", "拒答"], "gold_answer": "检索、推理、引用、拒答。"}
+{"question": "多智能体编排里主 Agent 负责什么？", "gold": ["意图理解与任务拆解"], "gold_answer": "意图理解与任务拆解，子 Agent 并行执行。"}
+{"question": "流式输出用什么协议推送？", "gold": ["SSE 推送思考链路"], "gold_answer": "SSE，推送思考链路、工具调用日志与步骤状态。"}
+{"question": "后端的技术栈是什么？", "gold": ["FastAPI + SQLAlchemy"], "gold_answer": "Python 3.13 + FastAPI + SQLAlchemy + LangGraph。"}
+{"question": "检索链路用到哪些存储组件？", "gold": ["Neo4j（知识图谱）"], "gold_answer": "Milvus 向量、BM25 关键词、Neo4j 知识图谱。"}
+{"question": "子 Agent 是怎么执行的？", "gold": ["并行执行"], "gold_answer": "主 Agent 拆解后，子 Agent 并行执行。"}
+{"question": "前端用的什么框架？", "gold": ["Vue3"], "gold_answer": "Vue3。"}
+{"question": "平台怎么保证回答可溯源？", "gold": ["每一次回答都能溯源"], "gold_answer": "答案绑定引用块，每次回答都可溯源。"}
+{"question": "幻觉抑制在平台里怎么体现？", "gold": ["强制绑定引用来源块"], "gold_answer": "答案强制绑定引用来源块，低置信度拒答。"}
+{"question": "三级检索分别是哪三级？", "gold": ["向量召回", "关键词召回", "图召回"], "gold_answer": "向量召回、关键词召回、图召回。"}
+{"question": "RRF 的融合公式是什么？", "gold": ["Σ w_i / (k + rank_i)"], "gold_answer": "score = Σ w_i / (k + rank_i)。"}
+{"question": "RRF 里的 k 取多少？", "gold": ["k 取 60"], "gold_answer": "k 取 60。"}
+{"question": "关键词召回用的是什么算法？", "gold": ["BM25 倒排索引"], "gold_answer": "BM25 倒排索引。"}
+{"question": "图召回怎么扩展候选？", "gold": ["一跳扩展"], "gold_answer": "沿实体关系做一跳扩展。"}
+{"question": "重排之后保留多少条上下文？", "gold": ["Top-5"], "gold_answer": "只保留 Top-5 作为生成上下文。"}
+{"question": "向量召回在哪做近邻搜索？", "gold": ["近邻搜索"], "gold_answer": "在 Milvus 中做近邻搜索。"}
+{"question": "融合后的候选集还要经过什么处理？", "gold": ["Rerank 重排"], "gold_answer": "再经过 Rerank 重排。"}
+{"question": "为什么企业场景需要幻觉抑制？", "gold": ["员工依据错误答案做决策"], "gold_answer": "幻觉的代价很高，员工会依据错误答案做决策。"}
+{"question": "幻觉抑制的三条防线是什么？", "gold": ["引用强制绑定", "低置信度拒答", "检索上下文压缩"], "gold_answer": "引用强制绑定、低置信度拒答、检索上下文压缩。"}
+{"question": "引用编号越界会怎么处理？", "gold": ["拒绝并重写"], "gold_answer": "没有引用或引用越界的答案会被拒绝并重写。"}
+{"question": "检索结果相关性过低时系统怎么做？", "gold": ["系统拒绝回答"], "gold_answer": "低于阈值时系统拒绝回答，而不是强行生成。"}
+{"question": "检索上下文压缩的目的是什么？", "gold": ["降低无关上下文导致的幻觉"], "gold_answer": "只送最相关的块，降低无关上下文导致的幻觉。"}
+{"question": "评估集用哪些指标衡量？", "gold": ["召回率、MRR"], "gold_answer": "召回率、MRR、答案相关性。"}
+{"question": "幻觉率的目标是从多少降到多少？", "gold": ["18%"], "gold_answer": "从 18% 降到 5% 以下。"}
+{"question": "文档解析后要经过哪些处理才能被检索？", "gold": ["解析、分块、向量化"], "gold_answer": "解析、分块、向量化之后进入检索链路。"}
