@@ -11,7 +11,9 @@ venv/
 *.db
 *.db-shm
 *.db-wal
-data/
+/data/
+apps/api/data/
+apps/api/app/data/*
 !apps/api/app/data/.gitkeep
 
 # Node
