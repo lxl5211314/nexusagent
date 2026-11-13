@@ -114,13 +114,24 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 
 样例集是 27 题 / 3 篇文档，用来防止改动把链路改坏，不代表真实效果。扩语料后应该按领域分组统计，而不是只看一个总数。
 
-## 8. 外部工具的接入点
+## 9. 外部工具的接入点
 
 知识库答不了的问题（命中片段少于 2 个）才轮到外部工具。选择器按问题与工具名/描述的词面覆盖度打分，只考虑只读且必填参数都有默认值的工具——参数拼不出来就放弃，不拿空参数去撞上游。
 
 调用同样经过 `ToolRegistry`，因此权限、审计、`tool.call` 事件和内置工具完全一致。手工调用走 `POST /api/mcp/call`，会写 `mcp.call` 审计；写工具仍然要 `approval_token`。
 
 `ensure_loaded()` 只在确实发现了 server 之后才置位，否则一次「配置还没加载」的空跑会让整个进程永远不注册 MCP 工具。
+
+## 10. 缓存
+
+缓存只服务两个读多写少的场景，且都允许丢失：
+
+- 运行状态：`nexus:run:{id}:state`，TTL 一小时。`create_run` 写入初始态，`EventWriter.emit` 只改 `seq`（和终态时的 `status`），`finalize_run` 写回答案与置信度。`GET /api/runs/{id}` 先读缓存，未命中回表并回填。
+- 最近对话：`nexus:chat:{tenant}:recent`，一个租户一条 JSON 数组，最多 50 条，按 `run_id` 去重后插到队首。`GET /api/chat/history` 只读它，不回表——历史丢了不影响正确性，重建库时也没必要回填。
+
+不缓存的内容：事件流。事件必须按 `seq` 可从库里重放，缓存一份只会制造两份真值。
+
+所有写操作都是 best-effort：`RedisCache.set_json` 吞掉连接异常并打 warning，`get_json` 把异常当成 miss。单机不配 `NEXUS_REDIS_URL` 时用进程内 `LocalCache`，行为一致、重启即空。
 
 外部证据的编号：工具返回正文后，worker 追加一个 `RetrievedChunk`（`chunk_id=mcp.<server>.<tool>`、`heading=外部工具`、`scores={"rerank":0.25,"external":1.0}`）到 contexts 尾部。这样引用校验不需要为外部源开特例——它天然落在 `1..len(contexts)` 内，UI 也能按 doc_name 显示来源。0.25 的 rerank 分让它对置信度的贡献有上限，不会因为「调了个工具」就把拒答阈值顶穿。
 

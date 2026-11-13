@@ -8,6 +8,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import ChatRequest, RetrievalRequest
+from app.cache import (
+    RECENT_LIMIT,
+    cached_run,
+    recent_turns,
+    remember_run,
+)
 from app.core.tenant import get_tenant
 from app.db.base import get_db, session_scope
 from app.db.models import KnowledgeBase
@@ -126,10 +132,13 @@ async def resume_stream(
 
 @router.get("/runs/{run_id}")
 async def get_run_detail(run_id: str, tenant_id: str = Depends(get_tenant)):
+    cached = cached_run(run_id)
+    if cached is not None and cached.get("tenant_id") == tenant_id:
+        return cached
     run = _owned_run(run_id, tenant_id)
     if run is None:
         raise HTTPException(404, "run not found")
-    return {
+    detail = {
         "id": run.id,
         "kb_id": run.kb_id,
         "question": run.question,
@@ -141,6 +150,30 @@ async def get_run_detail(run_id: str, tenant_id: str = Depends(get_tenant)):
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
     }
+    remember_run(
+        run_id,
+        tenant_id=run.tenant_id,
+        kb_id=run.kb_id,
+        question=run.question,
+        status=run.status,
+        seq=run.seq,
+        answer=run.answer,
+        confidence=run.confidence,
+        refused=run.refused,
+        error=run.error,
+        created_at=detail["created_at"],
+        finished_at=detail["finished_at"],
+    )
+    return detail
+
+
+@router.get("/chat/history")
+async def chat_history(
+    limit: int = Query(20, ge=1, le=RECENT_LIMIT),
+    tenant_id: str = Depends(get_tenant),
+):
+    """Recent turns for this tenant, newest first. Cache-only by design."""
+    return {"items": recent_turns(tenant_id, limit)}
 
 
 @router.post("/retrieval/search")

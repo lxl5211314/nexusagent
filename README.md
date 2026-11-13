@@ -69,7 +69,7 @@ recall@5 = 1.00    mrr@5 = 0.92    faithfulness = 0.81    zero_hit = 0
 - 三路召回命中 2 条，分数里能看到 `dense / sparse / graph / rrf / rerank` 各自的值
 - 删库后两个外部库都归零（`scripts/live_cleanup.py` 断言）
 
-测试：后端 59 个用例（含 fakeredis 驱动的跨实例事件总线和可选的真实存储联调），网关 7 个用例，全部离线可跑。
+测试：后端 87 个用例（含 fakeredis 驱动的跨实例事件总线、运行状态缓存和可选的真实存储联调），网关 7 个用例，全部离线可跑。
 
 ## 快速开始
 
@@ -133,7 +133,14 @@ NEXUS_REDIS_URL=redis://127.0.0.1:6379/0 \
 uvicorn app.main:app --workers 4
 ```
 
-开 Redis 后，写事件的一侧 `PUBLISH nexus:run:{id}`，任意实例上的 SSE 连接都能收到；队列只是降低延迟，事件真值仍在 `run_events` 表，漏掉的部分按 `seq` 从库里补。`python -m pytest tests/test_bus.py` 用 fakeredis 起真实 TCP 端验证这条链路，不需要装 Redis。
+开 Redis 后，写事件的一侧 `PUBLISH nexus:run:{id}`，任意实例上的 SSE 连接都能收到；队列只是降低延迟，事件真值仍在 `run_events` 表，漏掉的部分按 `seq` 从库里补。`tests/test_bus.py` 用 fakeredis 的进程内 server 验证跨实例收发，不需要装 Redis。
+
+同一份 Redis 还存两类热数据：
+
+- `nexus:run:{id}:state` —— 运行状态快照（状态、序号、答案、置信度、拒答标记，TTL 1 小时）。`GET /api/runs/{id}` 先读它，未命中再回表并把结果写回，前端轮询不必每次查库。
+- `nexus:chat:{tenant}:recent` —— 租户最近 50 轮问答，`GET /api/chat/history` 直接读它，界面上「最近对话」就是这块。
+
+两者的真值都在 SQLite/Postgres：缓存写失败只记一条 warning，读不到就回表，所以 Redis 挂掉是降级而不是故障（`tests/test_cache.py` 覆盖了不可达时读穿透到 DB 的路径）。
 
 ## 网关（可选）
 

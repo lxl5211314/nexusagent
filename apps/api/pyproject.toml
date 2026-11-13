@@ -49,5 +49,5 @@ target-version = "py311"
 ignore = ["B008"]
 
 [tool.setuptools]
-packages = ["app", "app.api", "app.api.routes", "app.agent", "app.core", "app.db", "app.eval", "app.guard", "app.mcp", "app.rag", "app.rag.stores", "app.services", "app.storage", "app.streaming"]
+packages = ["app", "app.api", "app.api.routes", "app.agent", "app.cache", "app.core", "app.db", "app.eval", "app.guard", "app.mcp", "app.rag", "app.rag.stores", "app.services", "app.storage", "app.streaming"]
 include-package-data = false

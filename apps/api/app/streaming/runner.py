@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import select
 
 from app.agent import graph as agent_graph
+from app.cache import advance_run, remember_run, remember_turn
 from app.db.base import session_scope
 from app.db.models import Run, RunEvent
 from app.streaming.bus import get_bus
@@ -38,6 +39,15 @@ def create_run(kb_id: str, question: str, tenant_id: str = "local") -> str:
         )
         run.seq = 1
         session.flush()
+        remember_run(
+            run_id,
+            tenant_id=tenant_id,
+            kb_id=kb_id,
+            question=question,
+            status="running",
+            seq=1,
+            created_at=run.created_at.isoformat() if run.created_at else None,
+        )
         return run_id
 
 
@@ -74,6 +84,12 @@ class EventWriter:
                 )
             )
             session.merge(Run(id=self.run_id, seq=self._seq))
+        status = None
+        if type_ == "run.finished":
+            status = "completed"
+        elif type_ == "run.failed":
+            status = "failed"
+        advance_run(self.run_id, self._seq, status)
         self.bus.publish(event)
 
 
@@ -103,6 +119,13 @@ async def run_chat(
                 run.status = "failed"
                 run.error = str(exc)[:2000]
                 run.finished_at = datetime.now(UTC)
+                failed = {
+                    "tenant_id": run.tenant_id,
+                    "kb_id": run.kb_id,
+                    "question": run.question,
+                    "created_at": run.created_at.isoformat() if run.created_at else None,
+                }
+            remember_run(run_id, status="failed", seq=0, error=str(exc)[:500], **failed)
             writer.emit("run.failed", {"error": str(exc)[:500]})
 
     asyncio.get_running_loop().create_task(_execute())
@@ -117,6 +140,27 @@ def finalize_run(run_id: str, result: dict[str, Any]) -> None:
         run.confidence = result.get("confidence", 0.0)
         run.refused = bool(result.get("refused", False))
         run.finished_at = datetime.now(UTC)
+        snapshot = {
+            "tenant_id": run.tenant_id,
+            "kb_id": run.kb_id,
+            "question": run.question,
+            "answer": run.answer,
+            "confidence": run.confidence,
+            "refused": run.refused,
+            "seq": run.seq,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "finished_at": run.finished_at.isoformat(),
+        }
+    remember_run(run_id, status="completed", **snapshot)
+    remember_turn(
+        tenant_id=snapshot["tenant_id"],
+        run_id=run_id,
+        kb_id=snapshot["kb_id"],
+        question=snapshot["question"],
+        answer=snapshot["answer"],
+        refused=snapshot["refused"],
+        confidence=snapshot["confidence"],
+    )
 
 
 def get_run(run_id: str) -> Run:

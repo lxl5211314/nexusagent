@@ -31,6 +31,7 @@ const settings = ref({ mcp_tool_router: true, mcp_cite_external: true })
 const mcpMeta = ref({ configured: false, timeout_s: 30 })
 const settingsSaving = ref(false)
 const backends = ref(null)
+const history = ref([])
 const drawer = ref(null)
 const folded = ref({})
 
@@ -57,6 +58,11 @@ async function openCite(citation) {
 async function refreshBackends() {
   const r = await api('/api/system/backends')
   backends.value = r.ok ? await r.json() : null
+}
+
+async function refreshHistory() {
+  const r = await api('/api/chat/history?limit=8')
+  history.value = r.ok ? (await r.json()).items : []
 }
 
 function setTenant(value) {
@@ -344,6 +350,7 @@ async function pump(res, holder) {
   }
   if (runStatus.value !== 'failed') runStatus.value = 'completed'
   if (holder.ms === null) holder.ms = Date.now() - holder.t0
+  refreshHistory()
 }
 
 async function send() {
@@ -423,7 +430,7 @@ async function runEval() {
   }
 }
 
-onMounted(() => { refreshKbs(); refreshBackends() })
+onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory() })
 </script>
 
 <template>
@@ -619,6 +626,18 @@ onMounted(() => { refreshKbs(); refreshBackends() })
           <div class="metric"><span>MRR@5</span><span>{{ evalResult.mrr_at_5 }}</span></div>
           <div class="metric"><span>Faithfulness</span><span>{{ evalResult.faithfulness }}</span></div>
           <div class="metric"><span>零命中</span><span>{{ evalResult.zero_hit }}</span></div>
+        </div>
+      </div>
+
+      <div class="trace-block" v-if="history.length">
+        <div class="head">
+          <button class="fold" @click="toggleFold('history')">{{ folded.history ? '▸' : '▾' }} 最近对话 · {{ history.length }} 条</button>
+        </div>
+        <div v-show="!folded.history">
+          <div class="row history-row" v-for="h in history" :key="h.run_id" :title="h.answer">
+            <span class="q">{{ h.question }}</span>
+            <span class="tag" :class="h.refused ? 'warn' : 'score'">{{ h.refused ? '拒答' : (h.confidence || 0).toFixed(2) }}</span>
+          </div>
         </div>
       </div>
 
