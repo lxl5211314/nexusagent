@@ -149,6 +149,33 @@ def list_documents(
     return [_doc_out(doc) for doc in rows]
 
 
+@router.get("/{kb_id}/chunks/{chunk_id}")
+def get_chunk(
+    kb_id: str,
+    chunk_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant),
+) -> dict:
+    """Full text of one chunk, for the citation drawer.
+
+    Search returns a compressed slice of the chunk; the drawer needs the
+    original so the reader can check what was actually indexed.
+    """
+    _get_owned(db, kb_id, tenant_id)
+    chunk = db.get(Chunk, chunk_id)
+    if chunk is None or chunk.kb_id != kb_id:
+        raise HTTPException(404, "chunk not found")
+    doc = db.get(Document, chunk.document_id)
+    return {
+        "id": chunk.id,
+        "doc_id": chunk.document_id,
+        "doc_name": doc.filename if doc else "",
+        "heading": chunk.heading,
+        "ordinal": chunk.ordinal,
+        "content": chunk.content,
+    }
+
+
 @router.get("/{kb_id}/documents/{doc_id}/content")
 def download_document(
     kb_id: str,

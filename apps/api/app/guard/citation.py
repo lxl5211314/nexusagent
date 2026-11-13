@@ -54,7 +54,7 @@ def check_answer(answer: str, contexts: list[RetrievedChunk]) -> CitationCheck:
                 chunk_id=ctx.chunk_id,
                 doc_name=ctx.doc_name,
                 heading=ctx.heading,
-                snippet=snippet[:160],
+                snippet=snippet[:400],
             )
         )
     return CitationCheck(valid=True, citations=citations)

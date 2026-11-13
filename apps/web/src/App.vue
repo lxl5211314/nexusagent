@@ -31,6 +31,28 @@ const settings = ref({ mcp_tool_router: true, mcp_cite_external: true })
 const mcpMeta = ref({ configured: false, timeout_s: 30 })
 const settingsSaving = ref(false)
 const backends = ref(null)
+const drawer = ref(null)
+const folded = ref({})
+
+function toggleFold(key) {
+  folded.value = { ...folded.value, [key]: !folded.value[key] }
+}
+
+async function openCite(citation) {
+  drawer.value = { ...citation, full: citation.snippet || '', loading: true }
+  if (isExternal(citation) || !activeKb.value) {
+    drawer.value.loading = false
+    return
+  }
+  const r = await api(`/api/kb/${activeKb.value.id}/chunks/${citation.chunk_id}`)
+  if (!drawer.value || drawer.value.chunk_id !== citation.chunk_id) return
+  if (r.ok) {
+    const body = await r.json()
+    drawer.value = { ...drawer.value, full: body.content || drawer.value.snippet, loading: false }
+  } else {
+    drawer.value = { ...drawer.value, loading: false }
+  }
+}
 
 async function refreshBackends() {
   const r = await api('/api/system/backends')
@@ -521,18 +543,20 @@ onMounted(() => { refreshKbs(); refreshBackends() })
             <span v-if="m.confidence!=null" class="tag score">
               置信度 {{ m.confidence.toFixed(2) }}
             </span>
-            <a
+            <button
               v-for="c in m.citations"
               :key="c.chunk_id"
+              type="button"
               class="cite"
               :class="{ ext: isExternal(c) }"
               :title="c.snippet"
+              @click="openCite(c)"
             >
               <b>{{ c.index }}</b>
               <span class="cite-name">{{ c.doc_name }}</span>
               <span v-if="c.heading" class="cite-head">· {{ c.heading }}</span>
               <span v-if="isExternal(c)" class="cite-label">外部</span>
-            </a>
+            </button>
           </div>
         </div>
       </div>
@@ -558,9 +582,10 @@ onMounted(() => { refreshKbs(); refreshBackends() })
 
       <div class="trace-block">
         <div class="head">
-          引擎状态
+          <button class="fold" @click="toggleFold('engine')">{{ folded.engine ? '▸' : '▾' }} 引擎状态</button>
           <button class="btn sm" @click="refreshBackends">刷新</button>
         </div>
+        <div v-show="!folded.engine">
         <template v-if="backends">
           <div class="metric"><span>向量库</span><span :class="backends.vector.ok ? 'ok' : 'bad'">{{ backends.vector.backend }}</span></div>
           <div class="metric"><span>知识图谱</span><span :class="backends.graph.ok ? 'ok' : 'bad'">{{ backends.graph.backend }}</span></div>
@@ -569,30 +594,43 @@ onMounted(() => { refreshKbs(); refreshBackends() })
           <div class="metric"><span>模型 / 嵌入</span><span>{{ backends.llm }} · {{ backends.embedding.provider }}({{ backends.embedding.dim }})</span></div>
         </template>
         <div class="row" v-else>读取中…</div>
+        </div>
       </div>
 
       <div class="trace-block" v-if="activeKb">
-        <div class="head">当前知识库</div>
-        <div class="metric"><span>文档</span><span>{{ activeKb.document_count }}</span></div>
-        <div class="metric"><span>文本块</span><span>{{ activeKb.chunk_count }}</span></div>
-        <div class="row" style="margin-top:6px;color:var(--muted)">
-          三路召回 → RRF → 重排 → 引用校验
+        <div class="head">
+          <button class="fold" @click="toggleFold('kb')">{{ folded.kb ? '▸' : '▾' }} 当前知识库</button>
+        </div>
+        <div v-show="!folded.kb">
+          <div class="metric"><span>文档</span><span>{{ activeKb.document_count }}</span></div>
+          <div class="metric"><span>文本块</span><span>{{ activeKb.chunk_count }}</span></div>
+          <div class="row" style="margin-top:6px;color:var(--muted)">
+            三路召回 → RRF → 重排 → 引用校验
+          </div>
         </div>
       </div>
 
       <div class="trace-block" v-if="evalResult">
-        <div class="head">最近一次评估 · {{ evalResult.total }} 题</div>
-        <div class="metric"><span>Recall@5</span><span class="ok">{{ evalResult.recall_at_5 }}</span></div>
-        <div class="metric"><span>MRR@5</span><span>{{ evalResult.mrr_at_5 }}</span></div>
-        <div class="metric"><span>Faithfulness</span><span>{{ evalResult.faithfulness }}</span></div>
-        <div class="metric"><span>零命中</span><span>{{ evalResult.zero_hit }}</span></div>
+        <div class="head">
+          <button class="fold" @click="toggleFold('eval')">{{ folded.eval ? '▸' : '▾' }} 最近一次评估 · {{ evalResult.total }} 题</button>
+        </div>
+        <div v-show="!folded.eval">
+          <div class="metric"><span>Recall@5</span><span class="ok">{{ evalResult.recall_at_5 }}</span></div>
+          <div class="metric"><span>MRR@5</span><span>{{ evalResult.mrr_at_5 }}</span></div>
+          <div class="metric"><span>Faithfulness</span><span>{{ evalResult.faithfulness }}</span></div>
+          <div class="metric"><span>零命中</span><span>{{ evalResult.zero_hit }}</span></div>
+        </div>
       </div>
 
       <div class="trace-block" v-if="audit.length">
-        <div class="head">审计 · 最近 {{ audit.length }} 条</div>
-        <div class="row" v-for="a in audit.slice(0, 8)" :key="a.id">
-          <span style="color:var(--text-dim)">{{ a.action }}</span>
-          <span v-if="a.resource_id"> · {{ a.resource_id.slice(0, 18) }}</span>
+        <div class="head">
+          <button class="fold" @click="toggleFold('audit')">{{ folded.audit ? '▸' : '▾' }} 审计 · 最近 {{ audit.length }} 条</button>
+        </div>
+        <div v-show="!folded.audit">
+          <div class="row" v-for="a in audit.slice(0, 8)" :key="a.id">
+            <span style="color:var(--text-dim)">{{ a.action }}</span>
+            <span v-if="a.resource_id"> · {{ a.resource_id.slice(0, 18) }}</span>
+          </div>
         </div>
       </div>
 
@@ -672,17 +710,45 @@ onMounted(() => { refreshKbs(); refreshBackends() })
       </template>
 
       <template v-else>
-        <div class="trace-block" v-if="runId"><div class="head">Run</div><div class="row">id: {{ runId }}</div></div>
-        <div class="trace-block" v-if="currentConfidence !== null"><div class="head">置信度</div><div class="row">{{ currentConfidence }}</div></div>
+        <div class="trace-block" v-if="runId">
+          <div class="head">当前运行</div>
+          <div class="row">id: {{ runId }}</div>
+        </div>
+        <div class="trace-block" v-if="currentConfidence !== null">
+          <div class="head">置信度</div>
+          <div class="row">{{ currentConfidence }}</div>
+        </div>
         <div class="trace-block" v-if="currentSteps.length">
           <div class="head">步骤</div>
-          <div v-for="(s,i) in currentSteps" :key="i" class="row">{{ s.status }} · {{ s.key }} · {{ s.detail }}</div>
+          <div v-for="(s,i) in currentSteps" :key="i" class="row">
+            {{ stepMark(s.status) }} {{ stepLabel(s.key) }}<span v-if="s.detail"> · {{ s.detail }}</span>
+          </div>
         </div>
         <div class="trace-block" v-if="currentCitations.length">
           <div class="head">引用</div>
-          <div v-for="c in currentCitations" :key="c.chunk_id" class="row">[{{ c.index }}] {{ c.doc_name }}<span v-if="c.heading"> · {{ c.heading }}</span> — {{ c.snippet }}</div>
+          <div v-for="c in currentCitations" :key="c.chunk_id" class="row">
+            [{{ c.index }}] {{ c.doc_name }}<span v-if="c.heading"> · {{ c.heading }}</span>
+          </div>
         </div>
       </template>
     </div>
+  </div>
+
+  <div v-if="drawer" class="drawer-mask" @click.self="drawer = null">
+    <aside class="drawer">
+      <header class="drawer-head">
+        <div class="drawer-meta">
+          <div class="drawer-title"><b>{{ drawer.index }}</b> {{ drawer.doc_name }}</div>
+          <div class="drawer-sub">
+            <span v-if="drawer.heading">{{ drawer.heading }}</span>
+            <span v-if="isExternal(drawer)" class="cite-label">外部工具返回</span>
+          </div>
+        </div>
+        <button class="btn sm" @click="drawer = null">关闭</button>
+      </header>
+      <pre class="drawer-body">{{ drawer.loading ? "" : drawer.full }}</pre>
+      <div v-if="drawer.loading" class="drawer-loading">读取原文…</div>
+      <footer class="drawer-foot">chunk: {{ drawer.chunk_id }}</footer>
+    </aside>
   </div>
 </template>

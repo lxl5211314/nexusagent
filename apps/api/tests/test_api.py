@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from sqlalchemy import select
+
+from app.db.models import Chunk
 from app.rag.index import invalidate
 
 
@@ -106,3 +109,23 @@ def test_eval_unknown_dataset(client):
     resp = client.post("/api/eval/runs", json={"kb_id": kb_id, "dataset": "does_not_exist"})
     assert resp.status_code == 404
     invalidate(kb_id)
+
+
+def test_chunk_detail_for_citation_drawer(client, session):
+    kb_id = client.post("/api/kb", json={"name": "引用库"}).json()["id"]
+    content = "# 标题\n\n这一段是正文，用来验证引用抽屉能拿到完整块。"
+    client.post(
+        f"/api/kb/{kb_id}/documents",
+        files={"file": ("c.md", content.encode(), "text/markdown")},
+    )
+    chunk = session.execute(select(Chunk).where(Chunk.kb_id == kb_id)).scalars().first()
+    assert chunk is not None
+
+    ok = client.get(f"/api/kb/{kb_id}/chunks/{chunk.id}")
+    assert ok.status_code == 200
+    body = ok.json()
+    assert "正文" in body["content"]
+    assert body["doc_name"] == "c.md"
+
+    hidden = client.get(f"/api/kb/{kb_id}/chunks/{chunk.id}", headers={"X-Tenant-Id": "other"})
+    assert hidden.status_code == 404

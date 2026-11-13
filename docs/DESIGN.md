@@ -125,3 +125,5 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 外部证据的编号：工具返回正文后，worker 追加一个 `RetrievedChunk`（`chunk_id=mcp.<server>.<tool>`、`heading=外部工具`、`scores={"rerank":0.25,"external":1.0}`）到 contexts 尾部。这样引用校验不需要为外部源开特例——它天然落在 `1..len(contexts)` 内，UI 也能按 doc_name 显示来源。0.25 的 rerank 分让它对置信度的贡献有上限，不会因为「调了个工具」就把拒答阈值顶穿。
 
 两个开关落在 `app/core/runtime.py`：`mcp_tool_router` 控制要不要调，`mcp_cite_external` 控制结果要不要进来源。只有白名单里的键可改，写入 `data/runtime.json`，启动时 `apply_overrides()` 回灌到 settings 单例，避免为一个布尔值重启服务。
+
+引用抽屉：`check_answer` 里只带 `snippet`，而 snippet 是压缩后的句子集合——读者点开时想核对的是原文，不是压缩结果。所以前端点引用后单独打 `GET /api/kb/{kb}/chunks/{chunk_id}` 取整块内容。接口按 `kb_id` 校验租户属主，跨租户一律 404；外部工具来源（`chunk_id` 形如 `mcp.server.tool`）没有对应行，直接用 citation 自带的正文。

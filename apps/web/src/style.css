@@ -471,3 +471,85 @@ body {
 .metric .ok { color: var(--ok); }
 .metric .bad { color: var(--err); }
 .panel .row { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ---------- foldable panel heads ---------- */
+
+.fold {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.fold:hover { color: var(--text); }
+
+/* ---------- citation drawer ---------- */
+
+.drawer-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 10, 0.62);
+  backdrop-filter: blur(2px);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 50;
+  animation: fade 0.14s ease-out;
+}
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+.drawer {
+  width: min(520px, 92vw);
+  height: 100%;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  box-shadow: -18px 0 46px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  animation: slide 0.18s ease-out;
+}
+@keyframes slide { from { transform: translateX(18px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+
+.drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.drawer-meta { min-width: 0; }
+.drawer-title { font-size: 13px; display: flex; align-items: center; gap: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-title b {
+  width: 18px; height: 18px; flex: none;
+  display: inline-grid; place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: #a9c2ff;
+  font-size: 10px;
+}
+.drawer-sub { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+
+.drawer-body {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 16px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.drawer-foot {
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.drawer-loading { padding: 0 16px 16px; color: var(--muted); font-size: 11.5px; }
