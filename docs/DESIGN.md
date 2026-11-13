@@ -70,23 +70,25 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 
 事件的产生和传输是分开的：
 
-1. `EventWriter.emit()` 先写库（拿 `seq`），再推给当前连接的订阅者。
-2. `GET /runs/{id}/stream` 不依赖内存状态，直接按 `seq > Last-Event-ID` 轮询数据库，读完且 run 已终态就关闭。
+1. `EventWriter.emit()` 先写库（拿 `seq`），再 `bus.publish()` 给订阅者。
+2. `GET /runs/{id}/stream` 先读进程内队列，超时再按 `seq > Last-Event-ID` 从库里补，读完且 run 已终态就关闭。
 
-好处是多实例下不需要 sticky session：客户端重连到任何一台机器，都能从库里补齐。代价是每个连接有一次轮询开销（默认 0.2s 间隔），对问答场景可以接受。
+`Bus` 有两个实现：`LocalBus` 是进程内队列，`RedisBus` 把事件 `PUBLISH` 到 `nexus:run:{id}`。多实例时不要求 sticky session：连接落在哪台机器都能收到；即使某条 publish 丢了，回库补齐也会把缺口填上，因为真值在 `run_events` 表。
 
-终态（`run.completed` / `run.finished` / 失败）一定会落库，客户端据此判断是否可以停止重连。
+代价是每个空闲连接有一次轮询开销（默认 0.2s 间隔），问答场景可以接受。终态（`run.completed` / `run.finished` / 失败）一定落库，客户端据此停止重连。
 
 ## 5. 外部存储
 
-`VectorStore` / `GraphStore` 是 Protocol，不是基类。local 实现包着进程内索引，Milvus/Neo4j 实现直连客户端，签名一致。
+`VectorStore` / `GraphStore` / `ObjectStore` 都是 Protocol，不是基类。local 实现包着进程内索引或文件目录，Milvus/Neo4j/S3 实现直连客户端，签名一致。
+
+原始文件单独存一份：分块是派生数据，引用里点「看原文」要的是上传的那份字节。`Document.object_key` 记录位置，删文档时按前缀清对象；老库通过 `ALTER TABLE` 前向补列，不用重建。
 
 几个实际踩过的坑，写在这里免得再犯：
 
 - Milvus 集合被释放后状态是 `released`，直接 search 会报 `code=101 ... call load() before search`，重开集合后必须 `load_collection()`。
 - Milvus 的 `filter` 是字符串拼接，租户值必须先过白名单再拼，否则 header 就是注入面。
 - Neo4j 批量建边时 `combinations(...)[:n]` 会抛 `TypeError`（生成器不可下标），要先 `list()`。
-- 删除 KB 或文档时，SQLite、向量库、图谱三处都要清；只清 SQLite 会留下孤儿块，检索还会命中已删除的内容。图谱的粒度是块，删文档后按剩余块整体 rebuild 最简单。
+- 删除 KB 或文档时，SQLite、向量库、图谱、对象存储四处都要清；只清 SQLite 会留下孤儿块，检索还会命中已删除的内容。图谱的粒度是块，删文档后按剩余块整体 rebuild 最简单。
 
 ## 6. 多租户与网关
 
