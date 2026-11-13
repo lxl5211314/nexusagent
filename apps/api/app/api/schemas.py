@@ -46,3 +46,18 @@ class EvalRunRequest(BaseModel):
     kb_id: str
     dataset: str = "sample"
     limit: int = Field(default=0, ge=0)
+
+
+class AuditOut(BaseModel):
+    id: int
+    tenant_id: str
+    actor: str
+    action: str
+    resource_type: str
+    resource_id: str
+    detail: str
+    created_at: datetime
+
+
+class TenantOut(BaseModel):
+    tenant_id: str

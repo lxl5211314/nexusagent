@@ -18,24 +18,44 @@ const currentConfidence = ref(null)
 const fileInput = ref(null)
 const evalResult = ref(null)
 const error = ref('')
+const tenant = ref(localStorage.getItem('nexus.tenant') || 'local')
+const audit = ref([])
+
+function setTenant(value) {
+  tenant.value = value.trim() || 'local'
+  localStorage.setItem('nexus.tenant', tenant.value)
+}
 
 const api = (path, opts = {}) => fetch(path, {
-  headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Tenant-Id': tenant.value,
+    ...(opts.headers || {}),
+  },
   ...opts,
 })
 
 async function refreshKbs() {
   const r = await api('/api/kb')
   kbs.value = await r.json()
+  if (activeKb.value && !kbs.value.some((kb) => kb.id === activeKb.value.id)) {
+    activeKb.value = null
+    docs.value = []
+  }
   if (kbs.value.length && !activeKb.value) {
     activeKb.value = kbs.value[0]
     await refreshDocs()
   }
 }
 
+async function refreshAudit() {
+  const r = await api('/api/audit?limit=20')
+  audit.value = r.ok ? await r.json() : []
+}
+
 async function refreshDocs() {
   if (!activeKb.value) return
-  const r = await api(`/api/kb/${activeKb.value.id}/docs`)
+  const r = await api(`/api/kb/${activeKb.value.id}/documents`)
   docs.value = await r.json()
 }
 
@@ -56,9 +76,13 @@ async function uploadFile() {
   if (!f || !activeKb.value) return
   const fd = new FormData()
   fd.append('file', f)
-  const r = await fetch(`/api/kb/${activeKb.value.id}/documents/upload`, { method: 'POST', body: fd })
+  const r = await fetch(`/api/kb/${activeKb.value.id}/documents`, {
+    method: 'POST',
+    body: fd,
+    headers: { 'X-Tenant-Id': tenant.value },
+  })
   const res = await r.json()
-  error.value = res.detail ? JSON.stringify(res.detail) : ''
+  if (!r.ok) error.value = res.detail ? JSON.stringify(res.detail) : `HTTP ${r.status}`
   fileInput.value.value = ''
   await refreshDocs()
 }
@@ -95,7 +119,7 @@ async function send() {
 
   const res = await fetch('/api/chat/stream', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': tenant.value },
     body: JSON.stringify({ kb_id: activeKb.value.id, question: q }),
   })
   if (!res.ok) {
@@ -168,7 +192,9 @@ async function send() {
 
 async function resumeRun() {
   if (!runId.value) return
-  const res = await fetch(`/api/runs/${runId.value}/stream`)
+  const res = await fetch(`/api/runs/${runId.value}/stream`, {
+    headers: { 'Last-Event-ID': '0', 'X-Tenant-Id': tenant.value },
+  })
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buf = ''
@@ -193,8 +219,20 @@ async function resumeRun() {
 
 async function runEval() {
   evalResult.value = null
-  const r = await api('/api/eval/run', { method: 'POST', body: JSON.stringify({ kb_id: activeKb.value.id, dataset: 'sample' }) })
-  evalResult.value = await r.json()
+  const r = await api('/api/eval/runs', { method: 'POST', body: JSON.stringify({ kb_id: activeKb.value.id, dataset: 'sample' }) })
+  const body = await r.json()
+  if (!r.ok) {
+    error.value = body.detail ? JSON.stringify(body.detail) : `HTTP ${r.status}`
+    return
+  }
+  const m = body.metrics || {}
+  evalResult.value = {
+    total: m.cases ?? body.results?.length ?? 0,
+    recall_at_5: m['recall@5'] ?? '-',
+    mrr_at_5: m['mrr@5'] ?? '-',
+    faithfulness: m.faithfulness ?? '-',
+    zero_hit: m.zero_hit_cases ?? 0,
+  }
 }
 
 onMounted(() => { refreshKbs() })
@@ -212,6 +250,14 @@ onMounted(() => { refreshKbs() })
 
   <div class="main">
     <div class="sidebar">
+      <h3>租户</h3>
+      <input
+        class="tenant-input"
+        :value="tenant"
+        @change="setTenant($event.target.value); refreshKbs()"
+        placeholder="X-Tenant-Id"
+        title="所有请求都会带上 X-Tenant-Id，用于隔离知识库与审计"
+      />
       <h3>知识库</h3>
       <button class="btn" @click="createKb" style="width:100%;margin-bottom:8px">+ 新建知识库</button>
       <div v-for="kb in kbs" :key="kb.id" class="kb-item" :class="{active: activeKb && activeKb.id===kb.id}" @click="selectKb(kb)">
@@ -220,6 +266,7 @@ onMounted(() => { refreshKbs() })
       </div>
 
       <h3>文档上传</h3>
+      <button class="btn" @click="refreshAudit" style="width:100%;margin-bottom:8px">查看审计日志</button>
       <div v-if="activeKb">
         <div class="upload">
           <input type="file" ref="fileInput" @change="uploadFile" />
@@ -264,6 +311,14 @@ onMounted(() => { refreshKbs() })
 
     <div class="panel">
       <h3>运行面板</h3>
+      <template v-if="audit.length">
+        <div class="trace-block">
+          <div class="head">审计日志 · {{ tenant }}</div>
+          <div class="row" v-for="a in audit" :key="a.id">
+            {{ a.action }} · {{ a.resource_type }} {{ a.resource_id.slice(0, 8) }} · {{ a.created_at.slice(11, 19) }}
+          </div>
+        </div>
+      </template>
       <template v-if="evalResult">
         <div class="metric"><span>样本数</span><span>{{ evalResult.total }}</span></div>
         <div class="metric"><span>Recall@5</span><span>{{ evalResult.recall_at_5 }}</span></div>

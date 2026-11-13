@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from app.db.base import SessionLocal
 from app.db.models import Chunk, Document
 from app.rag.bm25 import BM25
-from app.rag.graph_store import TermGraph, GraphStats
+from app.rag.graph_store import GraphStats, TermGraph
 from app.rag.text import cosine, tokenize
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from app.rag.index import invalidate
 
 

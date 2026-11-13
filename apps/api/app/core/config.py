@@ -49,9 +49,24 @@ class Settings(BaseSettings):
     citation_max_retry: int = 1
     low_confidence_threshold: float = 0.35
 
-    # --- Optional stores (v0.2 adapters) -----------------------------------
-    milvus_uri: str = ""
-    neo4j_uri: str = ""
+    # --- Storage backends (v0.2) -------------------------------------------
+    vector_backend: str = "local"  # local | milvus
+    graph_backend: str = "local"  # local | neo4j
+    ocr_backend: str = "none"  # none | mineru
+
+    milvus_uri: str = "http://127.0.0.1:19530"
+    milvus_token: str = ""
+    milvus_collection: str = "nexusagent_chunks"
+
+    neo4j_uri: str = "bolt://127.0.0.1:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "nexusagent"
+    neo4j_database: str = "neo4j"
+
+    mineru_base_url: str = "http://127.0.0.1:8888"
+    mineru_api_key: str = ""
+    mineru_timeout_s: float = 120.0
+
     s3_endpoint: str = ""
 
     def ensure_dirs(self) -> None:

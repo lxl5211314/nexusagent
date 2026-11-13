@@ -21,9 +21,9 @@ from app.db.base import session_scope
 from app.db.models import Run, RunEvent
 
 
-def create_run(kb_id: str, question: str) -> str:
+def create_run(kb_id: str, question: str, tenant_id: str = "local") -> str:
     with session_scope() as session:
-        run = Run(kb_id=kb_id, question=question, status="running")
+        run = Run(kb_id=kb_id, question=question, status="running", tenant_id=tenant_id)
         session.add(run)
         session.flush()
         run_id = run.id
@@ -79,9 +79,11 @@ class EventWriter:
             queue.put_nowait(event)
 
 
-async def run_chat(kb_id: str, question: str) -> tuple[str, asyncio.Queue[dict[str, Any]]]:
+async def run_chat(
+    kb_id: str, question: str, tenant_id: str = "local"
+) -> tuple[str, asyncio.Queue[dict[str, Any]]]:
     """Start a run and return (run_id, queue) for streaming."""
-    run_id = create_run(kb_id, question)
+    run_id = create_run(kb_id, question, tenant_id)
     writer = EventWriter(run_id)
     queue = writer.subscribe()
 

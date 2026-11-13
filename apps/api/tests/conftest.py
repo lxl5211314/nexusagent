@@ -16,10 +16,10 @@ os.environ.setdefault("NEXUS_DATABASE_URL", f"sqlite:///{(Path(_TMPDIR) / 'test.
 os.environ.setdefault("NEXUS_LLM_PROVIDER", "mock")
 os.environ.setdefault("NEXUS_EMBEDDING_PROVIDER", "hash")
 
-import pytest  # noqa: E402
+import pytest
 
-from app.db.base import init_db  # noqa: E402
-from app.rag.index import invalidate  # noqa: E402
+from app.db.base import init_db
+from app.rag.index import invalidate
 
 init_db()
 

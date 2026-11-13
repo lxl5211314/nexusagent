@@ -21,6 +21,7 @@ class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(32), default="local", index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -69,6 +70,7 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(32), default="local", index=True)
     kb_id: Mapped[str] = mapped_column(String(32), index=True)
     question: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(24), default="running")  # running|completed|failed
@@ -99,6 +101,7 @@ class ToolInvocation(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(String(32), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(32), default="local", index=True)
     tool: Mapped[str] = mapped_column(String(64))
     permission: Mapped[str] = mapped_column(String(64))
     side_effect: Mapped[str] = mapped_column(String(16))
@@ -113,9 +116,27 @@ class EvalRun(Base):
     __tablename__ = "eval_runs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(32), default="local", index=True)
     kb_id: Mapped[str] = mapped_column(String(32))
     dataset: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(24), default="completed")
     metrics: Mapped[str] = mapped_column(Text, default="{}")
     detail: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AuditLog(Base):
+    """Append-only record of tenant-visible actions (who did what, to what)."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(32), default="local", index=True)
+    actor: Mapped[str] = mapped_column(String(64), default="")
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    resource_type: Mapped[str] = mapped_column(String(32), default="")
+    resource_id: Mapped[str] = mapped_column(String(64), default="")
+    detail: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (Index("ix_audit_tenant_created", "tenant_id", "created_at"),)

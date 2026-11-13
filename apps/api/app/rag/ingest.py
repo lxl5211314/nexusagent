@@ -14,6 +14,7 @@ from app.rag.chunking import chunk_text
 from app.rag.embedding import get_embedder
 from app.rag.index import invalidate
 from app.rag.parsing import parse
+from app.rag.stores import VectorRecord, get_graph_store, get_vector_store
 
 
 class DuplicateDocument(Exception):
@@ -68,4 +69,33 @@ def ingest_document(session: Session, kb_id: str, filename: str, data: bytes, mi
 
     session.flush()
     invalidate(kb_id)
+    _sync_external(session, kb_id)
     return document
+
+
+def _sync_external(session: Session, kb_id: str) -> None:
+    """Push the knowledge base into Milvus/Neo4j when those backends are on.
+
+    Local mode reads SQLite directly, so this is a no-op for the default setup.
+    """
+    settings = get_settings()
+    if settings.vector_backend == "local" and settings.graph_backend == "local":
+        return
+
+    rows = session.execute(select(Chunk).where(Chunk.kb_id == kb_id)).scalars().all()
+    if settings.vector_backend != "local":
+        get_vector_store().upsert(
+            [
+                VectorRecord(
+                    chunk_id=row.id,
+                    kb_id=row.kb_id,
+                    doc_id=row.document_id,
+                    content=row.content,
+                    heading=row.heading,
+                    vector=json.loads(row.embedding),
+                )
+                for row in rows
+            ]
+        )
+    if settings.graph_backend != "local":
+        get_graph_store().rebuild(kb_id, [(row.id, row.content) for row in rows])

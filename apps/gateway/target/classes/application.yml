@@ -1,0 +1,20 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: nexusagent-gateway
+
+nexus:
+  gateway:
+    python-base-url: ${NEXUS_PYTHON_BASE_URL:http://127.0.0.1:8017}
+    rate-limit-per-minute: ${NEXUS_GATEWAY_RATE_LIMIT:120}
+    upstream-timeout: 120s
+    # key -> tenant. Empty disables auth (local development).
+    api-keys: {}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

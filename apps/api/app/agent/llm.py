@@ -215,23 +215,22 @@ class OpenAILLM(LLM):
             "temperature": self.temperature,
             "stream": True,
         }
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            async with client.stream(
-                "POST", f"{self.base_url}/chat/completions", headers=self._headers(), json=payload
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        return
-                    try:
-                        delta = json.loads(data)["choices"][0]["delta"].get("content")
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
-                    if delta:
-                        yield delta
+        async with httpx.AsyncClient(timeout=self.timeout) as client, client.stream(
+            "POST", f"{self.base_url}/chat/completions", headers=self._headers(), json=payload
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    return
+                try:
+                    delta = json.loads(data)["choices"][0]["delta"].get("content")
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+                if delta:
+                    yield delta
 
 
 def _strip_code_fence(text: str) -> str:

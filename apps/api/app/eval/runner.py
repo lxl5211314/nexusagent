@@ -34,7 +34,7 @@ def load_dataset(name: str) -> list[dict]:
     return cases
 
 
-def run_eval(kb_id: str, dataset: str = "sample", limit: int = 0) -> dict:
+def run_eval(kb_id: str, dataset: str = "sample", limit: int = 0, tenant_id: str = "local") -> dict:
     cases = load_dataset(dataset)
     if limit > 0:
         cases = cases[:limit]
@@ -77,6 +77,7 @@ def run_eval(kb_id: str, dataset: str = "sample", limit: int = 0) -> dict:
         session.add(
             EvalRun(
                 kb_id=kb_id,
+                tenant_id=tenant_id,
                 dataset=dataset,
                 metrics=json.dumps(metrics, ensure_ascii=False),
                 detail=json.dumps(results, ensure_ascii=False),

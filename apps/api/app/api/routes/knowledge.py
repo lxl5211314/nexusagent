@@ -5,25 +5,53 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import DocumentOut, KnowledgeBaseIn, KnowledgeBaseOut
+from app.core.tenant import get_tenant
 from app.db.base import get_db
 from app.db.models import Chunk, Document, KnowledgeBase
 from app.rag.index import invalidate
 from app.rag.ingest import DuplicateDocument, ingest_document
+from app.services import audit
 
 router = APIRouter(prefix="/kb", tags=["knowledge"])
 
 
+def _get_owned(db: Session, kb_id: str, tenant_id: str) -> KnowledgeBase:
+    """Fetch a KB the tenant actually owns.
+
+    A cross-tenant id answers 404, never 403: existence itself is information.
+    """
+    kb = db.get(KnowledgeBase, kb_id)
+    if kb is None or kb.tenant_id != tenant_id:
+        raise HTTPException(404, "knowledge base not found")
+    return kb
+
+
 @router.post("", response_model=KnowledgeBaseOut, status_code=201)
-def create_kb(payload: KnowledgeBaseIn, db: Session = Depends(get_db)) -> KnowledgeBase:
-    kb = KnowledgeBase(name=payload.name, description=payload.description)
+def create_kb(
+    payload: KnowledgeBaseIn,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant),
+) -> KnowledgeBase:
+    kb = KnowledgeBase(name=payload.name, description=payload.description, tenant_id=tenant_id)
     db.add(kb)
+    db.flush()
+    audit.record(
+        db,
+        tenant_id=tenant_id,
+        action="kb.create",
+        resource_type="knowledge_base",
+        resource_id=kb.id,
+        detail={"name": kb.name},
+    )
     db.commit()
     db.refresh(kb)
     return _to_out(kb, 0, 0)
 
 
 @router.get("", response_model=list[KnowledgeBaseOut])
-def list_kb(db: Session = Depends(get_db)) -> list[KnowledgeBase]:
+def list_kb(
+    db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant)
+) -> list[KnowledgeBase]:
     rows = db.execute(
         select(
             KnowledgeBase,
@@ -32,26 +60,35 @@ def list_kb(db: Session = Depends(get_db)) -> list[KnowledgeBase]:
         )
         .outerjoin(Document, Document.kb_id == KnowledgeBase.id)
         .outerjoin(Chunk, Chunk.kb_id == KnowledgeBase.id)
+        .where(KnowledgeBase.tenant_id == tenant_id)
         .group_by(KnowledgeBase.id)
     ).all()
     return [_to_out(kb, docs or 0, chunks or 0) for kb, docs, chunks in rows]
 
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseOut)
-def get_kb(kb_id: str, db: Session = Depends(get_db)) -> KnowledgeBase:
-    kb = db.get(KnowledgeBase, kb_id)
-    if kb is None:
-        raise HTTPException(404, "knowledge base not found")
+def get_kb(
+    kb_id: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant)
+) -> KnowledgeBase:
+    kb = _get_owned(db, kb_id, tenant_id)
     docs = db.execute(select(func.count(Document.id)).where(Document.kb_id == kb_id)).scalar_one()
     chunks = db.execute(select(func.count(Chunk.id)).where(Chunk.kb_id == kb_id)).scalar_one()
     return _to_out(kb, docs, chunks)
 
 
 @router.delete("/{kb_id}", status_code=204)
-def delete_kb(kb_id: str, db: Session = Depends(get_db)) -> None:
-    kb = db.get(KnowledgeBase, kb_id)
-    if kb is None:
-        raise HTTPException(404, "knowledge base not found")
+def delete_kb(
+    kb_id: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant)
+) -> None:
+    kb = _get_owned(db, kb_id, tenant_id)
+    audit.record(
+        db,
+        tenant_id=tenant_id,
+        action="kb.delete",
+        resource_type="knowledge_base",
+        resource_id=kb_id,
+        detail={"name": kb.name},
+    )
     db.delete(kb)
     db.commit()
     invalidate(kb_id)
@@ -59,25 +96,39 @@ def delete_kb(kb_id: str, db: Session = Depends(get_db)) -> None:
 
 @router.post("/{kb_id}/documents", response_model=DocumentOut, status_code=201)
 async def upload_document(
-    kb_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)
+    kb_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant),
 ) -> Document:
-    if db.get(KnowledgeBase, kb_id) is None:
-        raise HTTPException(404, "knowledge base not found")
+    _get_owned(db, kb_id, tenant_id)
     data = await file.read()
+    filename = file.filename or "unnamed"
     try:
-        document = ingest_document(db, kb_id, file.filename or "unnamed", data, file.content_type or "")
+        document = ingest_document(db, kb_id, filename, data, file.content_type or "")
     except DuplicateDocument as exc:
         existing = db.get(Document, exc.document_id)
         return _doc_out(existing)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(422, str(exc)) from exc
+    audit.record(
+        db,
+        tenant_id=tenant_id,
+        action="document.upload",
+        resource_type="document",
+        resource_id=document.id,
+        detail={"kb_id": kb_id, "filename": filename, "size": len(data)},
+    )
     db.commit()
     db.refresh(document)
     return _doc_out(document)
 
 
 @router.get("/{kb_id}/documents", response_model=list[DocumentOut])
-def list_documents(kb_id: str, db: Session = Depends(get_db)) -> list[Document]:
+def list_documents(
+    kb_id: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant)
+) -> list[Document]:
+    _get_owned(db, kb_id, tenant_id)
     rows = (
         db.execute(select(Document).where(Document.kb_id == kb_id).order_by(Document.created_at))
         .scalars()
@@ -87,10 +138,24 @@ def list_documents(kb_id: str, db: Session = Depends(get_db)) -> list[Document]:
 
 
 @router.delete("/{kb_id}/documents/{doc_id}", status_code=204)
-def delete_document(kb_id: str, doc_id: str, db: Session = Depends(get_db)) -> None:
+def delete_document(
+    kb_id: str,
+    doc_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant),
+) -> None:
+    _get_owned(db, kb_id, tenant_id)
     doc = db.get(Document, doc_id)
     if doc is None or doc.kb_id != kb_id:
         raise HTTPException(404, "document not found")
+    audit.record(
+        db,
+        tenant_id=tenant_id,
+        action="document.delete",
+        resource_type="document",
+        resource_id=doc_id,
+        detail={"kb_id": kb_id, "filename": doc.filename},
+    )
     db.delete(doc)
     db.commit()
     invalidate(kb_id)

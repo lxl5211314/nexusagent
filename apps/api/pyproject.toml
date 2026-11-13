@@ -1,6 +1,6 @@
 [project]
 name = "nexusagent-api"
-version = "0.1.0"
+version = "0.3.0"
 description = "NexusAgent — enterprise knowledge agent platform (MVP)"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,6 +14,10 @@ dependencies = [
     "pypdf>=5.0",
     "python-docx>=1.1",
 ]
+
+[project.optional-dependencies]
+# Heavy clients for the v0.2 backends; local mode needs neither.
+stores = ["pymilvus>=2.4", "neo4j>=5.20"]
 
 [dependency-groups]
 dev = [
@@ -31,6 +35,10 @@ filterwarnings = ["ignore::DeprecationWarning"]
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.lint]
+# FastAPI injects dependencies via default arguments by design.
+ignore = ["B008"]
+
 [tool.setuptools]
-packages = ["app", "app.api", "app.api.routes", "app.agent", "app.core", "app.db", "app.eval", "app.guard", "app.rag", "app.streaming"]
+packages = ["app", "app.api", "app.api.routes", "app.agent", "app.core", "app.db", "app.eval", "app.guard", "app.rag", "app.rag.stores", "app.services", "app.streaming"]
 include-package-data = false

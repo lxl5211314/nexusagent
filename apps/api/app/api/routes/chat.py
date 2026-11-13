@@ -8,9 +8,11 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.schemas import ChatRequest, RetrievalRequest
-from app.db.base import get_db
-from app.db.models import KnowledgeBase, Run
+from app.core.tenant import get_tenant
+from app.db.base import get_db, session_scope
+from app.db.models import KnowledgeBase
 from app.rag.retriever import retrieve
+from app.services import audit
 from app.streaming.runner import get_run, run_chat, stream_run
 
 router = APIRouter(tags=["chat"])
@@ -24,20 +26,44 @@ def _sse(event: dict) -> str:
     )
 
 
+def _owned_run(run_id: str, tenant_id: str):
+    """Lookup that hides other tenants' runs behind a 404."""
+    try:
+        run = get_run(run_id)
+    except LookupError:
+        return None
+    return run if run.tenant_id == tenant_id else None
+
+
 @router.post("/chat/stream")
-async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
-    if db.get(KnowledgeBase, payload.kb_id) is None:
+async def chat_stream(
+    payload: ChatRequest,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant),
+):
+    kb = db.get(KnowledgeBase, payload.kb_id)
+    if kb is None or kb.tenant_id != tenant_id:
         raise HTTPException(404, "knowledge base not found")
 
-    run_id, queue = await run_chat(payload.kb_id, payload.question)
+    with session_scope() as session:
+        audit.record(
+            session,
+            tenant_id=tenant_id,
+            action="chat.ask",
+            resource_type="knowledge_base",
+            resource_id=kb.id,
+            detail={"question": payload.question[:200]},
+        )
+
+    run_id, queue = await run_chat(payload.kb_id, payload.question, tenant_id)
 
     async def generate():
         # Drain the live queue; the writer also persists to DB, so a disconnect
-        # costs nothing — the run finishes and can be replayed via GET.
+        # costs nothing: the run finishes and can be replayed via GET.
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if get_run(run_id).status != "running":
                     break
                 yield ": keepalive\n\n"
@@ -62,11 +88,11 @@ async def resume_stream(
     run_id: str,
     last_event_id: int = Query(0, alias="Last-Event-ID"),
     after_seq: int = Query(0),
+    tenant_id: str = Depends(get_tenant),
 ):
-    try:
-        run = get_run(run_id)
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    run = _owned_run(run_id, tenant_id)
+    if run is None:
+        raise HTTPException(404, "run not found")
 
     start = max(last_event_id, after_seq)
 
@@ -84,8 +110,10 @@ async def resume_stream(
 
 
 @router.get("/runs/{run_id}")
-async def get_run_detail(run_id: str):
-    run = get_run(run_id)
+async def get_run_detail(run_id: str, tenant_id: str = Depends(get_tenant)):
+    run = _owned_run(run_id, tenant_id)
+    if run is None:
+        raise HTTPException(404, "run not found")
     return {
         "id": run.id,
         "kb_id": run.kb_id,
@@ -101,8 +129,13 @@ async def get_run_detail(run_id: str):
 
 
 @router.post("/retrieval/search")
-async def search(payload: RetrievalRequest, db: Session = Depends(get_db)):
-    if db.get(KnowledgeBase, payload.kb_id) is None:
+async def search(
+    payload: RetrievalRequest,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_tenant),
+):
+    kb = db.get(KnowledgeBase, payload.kb_id)
+    if kb is None or kb.tenant_id != tenant_id:
         raise HTTPException(404, "knowledge base not found")
     result = retrieve(payload.kb_id, payload.query, top_k=payload.top_k, with_trace=True)
     return {

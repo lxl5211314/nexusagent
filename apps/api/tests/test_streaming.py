@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from app.db.base import session_scope
-from app.db.models import Run, RunEvent
+from app.db.models import RunEvent
 from app.streaming.runner import create_run, events_after, get_run, run_chat, stream_run
 
 
@@ -22,7 +20,6 @@ def test_create_run_persists_first_event(seeded_kb):
 
 def test_events_are_sequenced(seeded_kb):
     run_id = create_run(seeded_kb, "问题")
-    seqs = [events_after(run_id, 0)[0].seq]
     with session_scope() as session:
         session.add(RunEvent(run_id=run_id, seq=2, type="step.started", payload="{}"))
     assert events_after(run_id, 0)[1].seq == 2
@@ -30,11 +27,11 @@ def test_events_are_sequenced(seeded_kb):
 
 def test_run_chat_full_flow(seeded_kb):
     async def _run():
-        run_id, queue = await run_chat(seeded_kb, "RRF 融合公式的 k 取多少？")
+        run_id, queue = await run_chat(seeded_kb, "RRF 融合公式里 k 取多少？")
         for _ in range(300):
             try:
                 ev = await asyncio.wait_for(queue.get(), timeout=0.5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if get_run(run_id).status != "running":
                     break
                 continue
@@ -54,7 +51,7 @@ def test_stream_run_replays_from_db(seeded_kb):
         for _ in range(300):
             try:
                 ev = await asyncio.wait_for(queue.get(), timeout=0.5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if get_run(run_id).status != "running":
                     break
                 continue

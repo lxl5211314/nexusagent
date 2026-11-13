@@ -10,6 +10,7 @@ from app.rag.embedding import get_embedder
 from app.rag.fusion import rrf_fuse
 from app.rag.index import get_index
 from app.rag.rerank import HeuristicReranker, compress_context
+from app.rag.stores import get_graph_store, get_vector_store
 
 
 @dataclass(slots=True)
@@ -57,7 +58,7 @@ def retrieve(
 
     started = time.perf_counter()
     vector = get_embedder().embed(query)
-    dense = index.dense(vector, keep)
+    dense = get_vector_store().search(kb_id, vector, keep)
     trace.timings_ms["dense"] = round((time.perf_counter() - started) * 1000, 2)
 
     started = time.perf_counter()
@@ -65,7 +66,7 @@ def retrieve(
     trace.timings_ms["sparse"] = round((time.perf_counter() - started) * 1000, 2)
 
     started = time.perf_counter()
-    graph = index.graph_recall(query, keep)
+    graph = get_graph_store().recall(kb_id, query, keep)
     trace.timings_ms["graph"] = round((time.perf_counter() - started) * 1000, 2)
 
     started = time.perf_counter()

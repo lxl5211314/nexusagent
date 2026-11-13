@@ -1,0 +1,34 @@
+# Two-container deployment: API + static web (nginx reverse-proxies /api).
+# Zero external services: mock LLM, hash embeddings, local index.
+#   docker compose -f docker-compose.lite.yml up --build
+#   open http://localhost:8088
+name: nexusagent-lite
+
+services:
+  api:
+    build:
+      context: ./apps/api
+    environment:
+      NEXUS_LLM_PROVIDER: mock
+      NEXUS_EMBEDDING_PROVIDER: hash
+      NEXUS_VECTOR_BACKEND: local
+      NEXUS_GRAPH_BACKEND: local
+      NEXUS_DATABASE_URL: sqlite:////data/nexus.db
+      NEXUS_DATA_DIR: /data
+    volumes:
+      - nexus-data:/data
+    ports:
+      - "8017:8017"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+    depends_on:
+      - api
+    ports:
+      - "8088:80"
+    restart: unless-stopped
+
+volumes:
+  nexus-data:
