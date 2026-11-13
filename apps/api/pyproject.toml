@@ -20,12 +20,17 @@ dependencies = [
 stores = ["pymilvus>=2.4", "neo4j>=5.20"]
 # Embedded Milvus (file-backed, no server) for local integration runs.
 stores-lite = ["pymilvus>=2.4", "milvus-lite>=2.4"]
+# Multi-instance event fan-out (see app/streaming/bus.py).
+events = ["redis>=5.0"]
+# Same models, different engine: set NEXUS_DATABASE_URL to a postgresql+psycopg URL.
+postgres = ["psycopg[binary]>=3.1"]
 
 [dependency-groups]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
+    "fakeredis>=2.20",
 ]
 
 [tool.pytest.ini_options]

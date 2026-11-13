@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     mineru_api_key: str = ""
     mineru_timeout_s: float = 120.0
 
+    # Empty means the in-process queue: single instance only. Set it to
+    # redis://127.0.0.1:6379/0 to fan events out across processes.
+    redis_url: str = ""
+
     s3_endpoint: str = ""
 
     def ensure_dirs(self) -> None:

@@ -66,7 +66,7 @@ recall@5 = 1.00    mrr@5 = 0.92    faithfulness = 0.81    zero_hit = 0
 - 三路召回命中 2 条，分数里能看到 `dense / sparse / graph / rrf / rerank` 各自的值
 - 删库后两个外部库都归零（`scripts/live_cleanup.py` 断言）
 
-测试：后端 48 个用例，网关 7 个用例，全部离线可跑。
+测试：后端 53 个用例（含 fakeredis 驱动的跨实例事件总线和可选的真实存储联调），网关 7 个用例，全部离线可跑。
 
 ## 快速开始
 
@@ -102,6 +102,21 @@ curl -s localhost:8017/api/system/backends           # 确认真的连上了
 ```
 
 没有容器环境也能验证：`pip install -e ".[stores-lite]"` 用 Milvus Lite，`tools/neo4j-embedded` 用 `neo4j-harness` 起进程内 Bolt，跑 `python -m scripts.live_check`。
+
+## 多实例与 PostgreSQL
+
+单进程默认用 SQLite + 内存队列，开箱即用。要多实例部署时：
+
+```bash
+docker compose -f docker-compose.infra.yml up -d redis postgres
+pip install -e ".[events,postgres]"
+
+NEXUS_DATABASE_URL=postgresql+psycopg://nexus:nexus@127.0.0.1:5432/nexus \
+NEXUS_REDIS_URL=redis://127.0.0.1:6379/0 \
+uvicorn app.main:app --workers 4
+```
+
+开 Redis 后，写事件的一侧 `PUBLISH nexus:run:{id}`，任意实例上的 SSE 连接都能收到；队列只是降低延迟，事件真值仍在 `run_events` 表，漏掉的部分按 `seq` 从库里补。`python -m pytest tests/test_bus.py` 用 fakeredis 起真实 TCP 端验证这条链路，不需要装 Redis。
 
 ## 网关（可选）
 

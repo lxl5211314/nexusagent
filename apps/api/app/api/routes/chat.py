@@ -13,7 +13,7 @@ from app.db.base import get_db, session_scope
 from app.db.models import KnowledgeBase
 from app.rag.retriever import retrieve
 from app.services import audit
-from app.streaming.runner import get_run, run_chat, stream_run
+from app.streaming.runner import get_run, pending_events, run_chat, stream_run
 
 router = APIRouter(tags=["chat"])
 
@@ -62,14 +62,27 @@ async def chat_stream(
         # costs nothing: the run finishes and can be replayed via GET.
         # Tell the client its run id up front so it can resume after a drop.
         yield f"event: run.started\ndata: {json.dumps({'run_id': run_id})}\n\n"
+        last_seq = 0
         while True:
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=1.0)
+                event = await asyncio.wait_for(queue.get(), timeout=0.5)
             except TimeoutError:
+                # The queue is a latency optimisation, not the source of truth:
+                # anything it missed (slow relay, reconnect, instance switch)
+                # is replayed from the table before we check for the terminal row.
+                replayed = pending_events(run_id, last_seq)
+                for row in replayed:
+                    last_seq = row["seq"]
+                    yield _sse(row)
+                if replayed and replayed[-1]["type"] in {"run.failed", "run.finished"}:
+                    break
                 if get_run(run_id).status != "running":
                     break
                 yield ": keepalive\n\n"
                 continue
+            if event["seq"] <= last_seq:
+                continue
+            last_seq = event["seq"]
             yield _sse(event)
             if event["type"] in {"run.failed", "run.finished"}:
                 break

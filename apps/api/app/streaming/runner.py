@@ -19,6 +19,7 @@ from sqlalchemy import select
 from app.agent import graph as agent_graph
 from app.db.base import session_scope
 from app.db.models import Run, RunEvent
+from app.streaming.bus import get_bus
 
 
 def create_run(kb_id: str, question: str, tenant_id: str = "local") -> str:
@@ -45,16 +46,14 @@ class EventWriter:
 
     def __init__(self, run_id: str) -> None:
         self.run_id = run_id
-        self._subscribers: list[asyncio.Queue[dict[str, Any]]] = []
+        self.bus = get_bus()
         # create_run already persisted seq=1 (run.created); continue from there
         with session_scope() as session:
             run = session.get(Run, run_id)
             self._seq = run.seq if run is not None else 0
 
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self._subscribers.append(queue)
-        return queue
+        return self.bus.subscribe(self.run_id)
 
     def emit(self, type_: str, payload: dict[str, Any]) -> None:
         self._seq += 1
@@ -75,8 +74,7 @@ class EventWriter:
                 )
             )
             session.merge(Run(id=self.run_id, seq=self._seq))
-        for queue in self._subscribers:
-            queue.put_nowait(event)
+        self.bus.publish(event)
 
 
 async def run_chat(
@@ -86,6 +84,9 @@ async def run_chat(
     run_id = create_run(kb_id, question, tenant_id)
     writer = EventWriter(run_id)
     queue = writer.subscribe()
+    # With Redis, this instance is only a relay: another process may own the run.
+    if writer.bus.name != "local":
+        asyncio.get_running_loop().create_task(writer.bus.forward(run_id, queue))
 
     async def _execute() -> None:
         try:
@@ -141,19 +142,26 @@ def events_after(run_id: str, after_seq: int, limit: int = 200) -> list[RunEvent
         return rows
 
 
+def pending_events(run_id: str, after_seq: int, limit: int = 200) -> list[dict[str, Any]]:
+    """Same shape as the live events, read back from the table."""
+    return [
+        {
+            "run_id": run_id,
+            "seq": row.seq,
+            "type": row.type,
+            "payload": json.loads(row.payload),
+            "at": row.created_at.isoformat() if row.created_at else "",
+        }
+        for row in events_after(run_id, after_seq, limit)
+    ]
+
+
 async def stream_run(run_id: str, after_seq: int = 0) -> AsyncIterator[dict[str, Any]]:
     """Yield events from DB, polling while the run is active. Safe across processes."""
     while True:
-        rows = events_after(run_id, after_seq)
-        for row in rows:
-            after_seq = row.seq
-            yield {
-                "run_id": run_id,
-                "seq": row.seq,
-                "type": row.type,
-                "payload": json.loads(row.payload),
-                "at": row.created_at.isoformat() if row.created_at else "",
-            }
+        for event in pending_events(run_id, after_seq):
+            after_seq = event["seq"]
+            yield event
         run = get_run(run_id)
         if run.status != "running":
             return
