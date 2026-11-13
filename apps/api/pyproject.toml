@@ -1,7 +1,7 @@
 [project]
 name = "nexusagent-api"
 version = "0.3.0"
-description = "NexusAgent: enterprise knowledge agent platform (MVP)"
+description = "NexusAgent: enterprise knowledge agent platform"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Heavy clients for the v0.2 backends; local mode needs neither.
+# Heavy clients for the external backends; local mode needs neither.
 stores = ["pymilvus>=2.4", "neo4j>=5.20"]
 # Embedded Milvus (file-backed, no server) for local integration runs.
 stores-lite = ["pymilvus>=2.4", "milvus-lite>=2.4"]

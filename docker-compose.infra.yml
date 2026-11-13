@@ -1,6 +1,6 @@
 name: nexusagent-infra
 
-# Storage dependencies for v0.2. The app itself still runs on the host:
+# Storage dependencies. The app itself still runs on the host:
 #   docker compose -f docker-compose.infra.yml up -d
 #   NEXUS_VECTOR_BACKEND=milvus NEXUS_GRAPH_BACKEND=neo4j uvicorn app.main:app
 #

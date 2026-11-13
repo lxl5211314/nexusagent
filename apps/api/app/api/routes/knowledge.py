@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import DocumentOut, KnowledgeBaseIn, KnowledgeBaseOut
@@ -57,8 +57,10 @@ def list_kb(
     rows = db.execute(
         select(
             KnowledgeBase,
-            func.count(Document.id).label("docs"),
-            func.count(Chunk.id).label("chunks"),
+            # distinct: joining documents and chunks multiplies rows, so a plain
+            # COUNT would report docs × chunks instead of the real counts.
+            func.count(distinct(Document.id)).label("docs"),
+            func.count(distinct(Chunk.id)).label("chunks"),
         )
         .outerjoin(Document, Document.kb_id == KnowledgeBase.id)
         .outerjoin(Chunk, Chunk.kb_id == KnowledgeBase.id)

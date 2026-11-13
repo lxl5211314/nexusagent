@@ -64,7 +64,7 @@ def init_db() -> None:
     _ensure_tenant_columns()
 
 
-# Columns added after v0.1 shipped: existing databases need a forward migration.
+# Columns added later: existing databases need a forward migration.
 # ``create_all`` only creates missing tables, it never alters an existing one.
 _TENANT_TABLES = ("knowledge_bases", "runs", "tool_invocations", "eval_runs")
 

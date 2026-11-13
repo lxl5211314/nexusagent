@@ -90,10 +90,15 @@ class MockLLM(LLM):
 
         query_terms = set(tokenize(question))
         picked: list[tuple[int, str]] = []
+        seen: set[str] = set()
         for idx, ctx in enumerate(contexts[:3], start=1):
             sentence = _best_sentence(ctx.content, query_terms)
             if not sentence:
                 continue
+            key = re.sub(r"\W+", "", sentence)[:40]
+            if key in seen:
+                continue
+            seen.add(key)
             picked.append((idx, sentence))
 
         if not picked:
@@ -101,20 +106,24 @@ class MockLLM(LLM):
 
         lead = "仅依据检索片段作答：" if strict else "根据知识库中的内容："
         body = "；".join(f"{sentence} [{idx}]" for idx, sentence in picked)
-        tail = ""
-        if findings:
-            tail = "。补充检索结论：" + findings[0].summary.split("。")[0]
-        return f"{lead}{body}{tail}。"
+        return f"{lead}{body}。"
 
 
 def _best_sentence(content: str, query_terms: set[str], limit: int = 110) -> str:
-    sentences = [s for s in split_sentences(content) if len(s) >= 6]
+    # Headings, table rows and list markers carry structure, not answers: an
+    # extractive answer built from them reads like a table of contents.
+    lines = [
+        line for line in content.splitlines() if line.strip() and not line.lstrip().startswith(("#", "|", ">", "-", "*"))
+    ]
+    sentences = [s.strip() for s in split_sentences("\n".join(lines)) if len(s.strip()) >= 8]
+    # "…公式为：" is a lead-in to the next line, not an answer on its own.
+    sentences = [re.sub(r"^\d+[.、)]\s*", "", s) for s in sentences if not s.endswith(("：", ":"))]
     if not sentences:
-        return content.strip()[:limit]
+        return ""  # heading-only chunk: better to leave it out than to quote a title
     scored = [(len(query_terms & set(tokenize(s))), idx, s) for idx, s in enumerate(sentences)]
     scored.sort(key=lambda item: (-item[0], item[1]))
     best = scored[0][2] if scored and scored[0][0] > 0 else sentences[0]
-    best = best.strip().rstrip("。")
+    best = best.strip().lstrip("#").strip().rstrip("。；;")
     return best[:limit]
 
 

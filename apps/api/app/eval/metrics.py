@@ -1,8 +1,8 @@
 """Retrieval + answer-quality metrics.
 
 ``recall_at_k`` / ``mrr_at_k`` run over retrieved chunks vs gold snippets.
-``faithfulness`` is a lexical stand-in (cited chunk token coverage) — in v0.2 it
-is replaced by an LLM judge, keeping the same function signature.
+``faithfulness`` is a lexical stand-in (cited chunk token coverage); an LLM judge
+can replace it without changing the signature.
 """
 
 from __future__ import annotations

@@ -95,10 +95,109 @@ async function deleteDoc(docId) {
 
 function stripMd(text) {
   return text
-    .replace(/\[(\d+)\]/g, '')
     .replace(/\*\*/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+function fmtSize(n) {
+  if (!n && n !== 0) return ''
+  if (n < 1024) return `${n} B`
+  return `${(n / 1024).toFixed(1)} KB`
+}
+
+function newHolder() {
+  return { role: 'assistant', text: '', raw: '', steps: [], citations: [], refused: false }
+}
+
+// Maps the engine's SSE contract onto the view model. The backend emits
+// run.created / step.started / tool.call / tool.result / guard.violation /
+// token / run.completed / run.finished — keeping this in one place means the
+// live stream and the replay-after-reconnect path cannot drift apart.
+function applyEvent(holder, type, obj) {
+  if (type === 'run.created' || type === 'run.started') {
+    if (obj.run_id) runId.value = obj.run_id
+    runStatus.value = 'running'
+  } else if (type === 'step.started') {
+    // The pipeline is linear: a new node starting means the previous one moved on.
+    for (const s of holder.steps) if (s.status === 'running' && !s.key.startsWith('tool:')) s.status = 'done'
+    holder.steps.push({ key: obj.node || '', status: 'running', detail: obj.note || '' })
+    currentSteps.value = holder.steps.slice()
+  } else if (type === 'step.finished' || type === 'step.completed') {
+    const step = holder.steps.find((s) => s.key === obj.node && s.status === 'running')
+    if (step) step.status = 'done'
+    currentSteps.value = holder.steps.slice()
+  } else if (type === 'tool.call') {
+    holder.steps.push({
+      key: `tool:${obj.tool || ''}`,
+      status: 'running',
+      detail: obj.args && obj.args.query ? obj.args.query : '',
+    })
+    currentSteps.value = holder.steps.slice()
+  } else if (type === 'tool.result') {
+    const step = holder.steps
+      .slice()
+      .reverse()
+      .find((s) => s.key === `tool:${obj.tool || ''}` && s.status === 'running')
+    if (step) {
+      step.status = obj.ok ? 'done' : 'failed'
+      step.detail += ` · ${Number(obj.latency_ms || 0).toFixed(1)} ms`
+    }
+    currentSteps.value = holder.steps.slice()
+  } else if (type === 'guard.violation') {
+    holder.steps.push({ key: '引用守卫', status: 'warn', detail: '引用缺失或越界，重写一次' })
+    currentSteps.value = holder.steps.slice()
+  } else if (type === 'token') {
+    holder.raw += obj.text || ''
+    holder.text = stripMd(holder.raw)
+    currentAnswer.value = holder.text
+  } else if (type === 'run.completed') {
+    for (const s of holder.steps) if (s.status === 'running') s.status = 'done'
+    currentSteps.value = holder.steps.slice()
+    if (!holder.raw && obj.answer) holder.raw = obj.answer
+    holder.text = stripMd(holder.raw)
+    holder.citations = obj.citations || []
+    holder.refused = !!obj.refused
+    currentAnswer.value = holder.text
+    currentCitations.value = holder.citations
+    currentRefused.value = holder.refused
+    currentConfidence.value = obj.confidence ?? null
+    runStatus.value = 'completed'
+  } else if (type === 'run.failed') {
+    holder.text = holder.text || `处理失败：${obj.error || ''}`
+    runStatus.value = 'failed'
+  } else if (type === 'run.finished') {
+    return true
+  }
+  return false
+}
+
+async function pump(res, holder) {
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let finished = false
+  while (!finished) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let idx
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const block = buf.slice(0, idx)
+      buf = buf.slice(idx + 2)
+      let t = ''
+      let d = ''
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event:')) t = line.slice(6).trim()
+        else if (line.startsWith('data:')) d += line.slice(5).trim()
+      }
+      if (!t) continue
+      let obj = {}
+      try { obj = JSON.parse(d) } catch (e) { /* keepalive or partial frame */ }
+      if (applyEvent(holder, t, obj)) finished = true
+    }
+  }
+  if (runStatus.value !== 'failed') runStatus.value = 'completed'
 }
 
 async function send() {
@@ -107,7 +206,7 @@ async function send() {
   input.value = ''
   error.value = ''
   messages.value.push({ role: 'user', text: q })
-  const holder = { role: 'assistant', text: '', steps: [], citations: [], refused: false }
+  const holder = newHolder()
   messages.value.push(holder)
   running.value = true
   currentSteps.value = []
@@ -130,61 +229,13 @@ async function send() {
     return
   }
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  let eventType = ''
-  let eventData = ''
-  let finished = false
-
-  const handleEvent = (type, data) => {
-    let obj = {}
-    try { obj = JSON.parse(data) } catch (e) {}
-    if (type === 'run.started') {
-      runId.value = obj.run_id || null
-      runStatus.value = 'running'
-    } else if (type === 'run.step') {
-      const step = { key: obj.key || '', status: obj.status || '', detail: obj.detail || '' }
-      holder.steps.push(step)
-      currentSteps.value = holder.steps
-    } else if (type === 'run.answer') {
-      holder.text = stripMd(obj.answer || '')
-      holder.citations = obj.citations || []
-      holder.refused = !!obj.refused
-      currentAnswer.value = holder.text
-      currentCitations.value = holder.citations
-      currentRefused.value = holder.refused
-      currentConfidence.value = obj.confidence ?? null
-    } else if (type === 'run.trace') {
-      trace.value = obj
-    } else if (type === 'run.completed') {
-      runStatus.value = 'completed'
-    } else if (type === 'run.failed') {
-      holder.text = holder.text || '处理失败'
-      runStatus.value = 'failed'
-    } else if (type === 'run.finished') {
-      finished = true
-    }
-  }
-
-  while (!finished) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let idx
-    while ((idx = buf.indexOf('\n\n')) !== -1) {
-      const block = buf.slice(0, idx)
-      buf = buf.slice(idx + 2)
-      let t = '', d = ''
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event:')) t = line.slice(6).trim()
-        else if (line.startsWith('data:')) d += line.slice(5).trim()
-      }
-      if (t) handleEvent(t, d)
-    }
+  try {
+    await pump(res, holder)
+  } catch (e) {
+    error.value = String(e)
+    runStatus.value = 'failed'
   }
   running.value = false
-  if (runStatus.value !== 'failed') runStatus.value = 'completed'
   await nextTick()
   const el = document.querySelector('.messages')
   if (el) el.scrollTop = el.scrollHeight
@@ -192,29 +243,20 @@ async function send() {
 
 async function resumeRun() {
   if (!runId.value) return
-  const res = await fetch(`/api/runs/${runId.value}/stream`, {
-    headers: { 'Last-Event-ID': '0', 'X-Tenant-Id': tenant.value },
-  })
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buf = ''
-  let finished = false
-  while (!finished) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let idx
-    while ((idx = buf.indexOf('\n\n')) !== -1) {
-      const block = buf.slice(0, idx)
-      buf = buf.slice(idx + 2)
-      let t = '', d = ''
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event:')) t = line.slice(6).trim()
-        else if (line.startsWith('data:')) d += line.slice(5).trim()
-      }
-      if (t === 'run.finished') finished = true
-    }
+  running.value = true
+  const holder = newHolder()
+  messages.value.push(holder)
+  try {
+    const res = await fetch(`/api/runs/${runId.value}/stream`, {
+      headers: { 'Last-Event-ID': '0', 'X-Tenant-Id': tenant.value },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    await pump(res, holder)
+  } catch (e) {
+    error.value = String(e)
+    runStatus.value = 'failed'
   }
+  running.value = false
 }
 
 async function runEval() {
@@ -241,7 +283,7 @@ onMounted(() => { refreshKbs() })
 <template>
   <div class="topbar">
     <h1>NexusAgent</h1>
-    <span class="sub">企业知识智能体 · MVP · 离线可跑</span>
+    <span class="sub">企业知识智能体 · 私有部署 · 答案可溯源</span>
     <span style="flex:1"></span>
     <span v-if="runStatus==='running'" class="status-badge running">运行中</span>
     <span v-else-if="runStatus==='completed'" class="status-badge completed">完成</span>
@@ -273,7 +315,7 @@ onMounted(() => { refreshKbs() })
         </div>
         <div v-for="d in docs" :key="d.id" class="doc-item">
           <div class="fname">{{ d.filename }}</div>
-          <div class="fmeta">{{ d.chunk_count }} 块 · {{ d.size_bytes }} B</div>
+          <div class="fmeta">{{ d.chunk_count }} 块 · {{ fmtSize(d.size) }}</div>
           <button class="btn" @click="deleteDoc(d.id)" style="margin-top:2px;padding:2px 6px">删除</button>
         </div>
       </div>
@@ -296,7 +338,7 @@ onMounted(() => { refreshKbs() })
           </div>
           <div class="citations" v-if="m.citations && m.citations.length">
             引用：
-            <a v-for="c in m.citations" :key="c.chunk_id" :title="c.content">{{ c.doc_name }} #[{{ c.ordinal }}]</a>
+            <a v-for="c in m.citations" :key="c.chunk_id" :title="c.snippet">[{{ c.index }}] {{ c.doc_name }}<span v-if="c.heading"> · {{ c.heading }}</span></a>
           </div>
         </div>
       </div>
@@ -334,7 +376,7 @@ onMounted(() => { refreshKbs() })
           <div class="row">query: {{ trace.query }}</div>
           <div class="row">channel: dense={{ trace.dense?.length }} bm25={{ trace.bm25?.length }} graph={{ trace.graph?.length }}</div>
           <div v-for="c in trace.retrieved" :key="c.chunk_id" class="trace-block" style="margin-top:4px">
-            <div class="head">{{ c.doc_name }} #[{{ c.ordinal }}] · rank {{ c.rank }} · {{ (c.score*100).toFixed(0) }}%</div>
+            <div class="head">[{{ c.index }}] {{ c.doc_name }}<span v-if="c.heading"> · {{ c.heading }}</span> · rank {{ c.rank }}</div>
             <div class="row">{{ c.compressed || c.content }}</div>
           </div>
         </div>
@@ -349,7 +391,7 @@ onMounted(() => { refreshKbs() })
         </div>
         <div class="trace-block" v-if="currentCitations.length">
           <div class="head">引用</div>
-          <div v-for="c in currentCitations" :key="c.chunk_id" class="row">{{ c.doc_name }} #[{{ c.ordinal }}] · {{ c.content }}</div>
+          <div v-for="c in currentCitations" :key="c.chunk_id" class="row">[{{ c.index }}] {{ c.doc_name }}<span v-if="c.heading"> · {{ c.heading }}</span> — {{ c.snippet }}</div>
         </div>
       </template>
     </div>

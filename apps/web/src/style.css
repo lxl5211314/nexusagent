@@ -92,7 +92,7 @@ body {
 .step.active .dot { background: var(--accent); }
 .step.done .dot { background: var(--ok); }
 
-.citations { margin-top: 8px; font-size: 12px; }
+.citations { margin-top: 8px; font-size: 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .citations a { color: var(--accent); text-decoration: none; cursor: pointer; }
 .citations a:hover { text-decoration: underline; }
 

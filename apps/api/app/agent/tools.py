@@ -111,7 +111,7 @@ class ToolRegistry:
 
 
 # ---------------------------------------------------------------------------
-# The three MVP tools
+# Built-in tools
 # ---------------------------------------------------------------------------
 def _kb_search(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
     from app.rag.retriever import retrieve

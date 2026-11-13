@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     citation_max_retry: int = 1
     low_confidence_threshold: float = 0.35
 
-    # --- Storage backends (v0.2) -------------------------------------------
+    # --- Storage backends --------------------------------------------------
     vector_backend: str = "local"  # local | milvus
     graph_backend: str = "local"  # local | neo4j
     ocr_backend: str = "none"  # none | mineru

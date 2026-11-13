@@ -1,8 +1,8 @@
-"""Document parsing for the MVP formats.
+"""Document parsing.
 
-The ``Parser`` protocol is the seam MinerU / PaddleOCR plug into in v0.2; the
-router below already picks a parser by extension+size, which is the same shape
-the multimodal router takes.
+The ``Parser`` protocol is the seam MinerU / PaddleOCR plug into; the router
+below picks a parser by extension+size, so adding an OCR path does not touch
+the chunking or embedding stages.
 """
 
 from __future__ import annotations

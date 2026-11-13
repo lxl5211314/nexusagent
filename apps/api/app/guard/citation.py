@@ -47,13 +47,14 @@ def check_answer(answer: str, contexts: list[RetrievedChunk]) -> CitationCheck:
     citations: list[Citation] = []
     for idx in indexes:
         ctx = contexts[idx - 1]
+        snippet = ctx.compressed.strip().lstrip("#").strip()
         citations.append(
             Citation(
                 index=idx,
                 chunk_id=ctx.chunk_id,
                 doc_name=ctx.doc_name,
                 heading=ctx.heading,
-                snippet=ctx.compressed[:160],
+                snippet=snippet[:160],
             )
         )
     return CitationCheck(valid=True, citations=citations)

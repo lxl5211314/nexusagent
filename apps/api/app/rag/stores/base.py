@@ -1,6 +1,6 @@
 """Storage ports: the vector-store and graph-store seams.
 
-The MVP ships ``local`` implementations (in-process). ``milvus`` / ``neo4j``
+The default build ships ``local`` implementations (in-process). ``milvus`` / ``neo4j``
 implement the same protocols so the retrieval pipeline does not branch on the
 backend — only the factory does.
 """

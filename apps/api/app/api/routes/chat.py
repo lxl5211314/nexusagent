@@ -60,6 +60,8 @@ async def chat_stream(
     async def generate():
         # Drain the live queue; the writer also persists to DB, so a disconnect
         # costs nothing: the run finishes and can be replayed via GET.
+        # Tell the client its run id up front so it can resume after a drop.
+        yield f"event: run.started\ndata: {json.dumps({'run_id': run_id})}\n\n"
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=1.0)

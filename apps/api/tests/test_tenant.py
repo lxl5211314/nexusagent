@@ -1,4 +1,4 @@
-"""v0.3 tenant isolation, audit trail and forward migration."""
+"""Tenant isolation, audit trail and forward migration."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ def test_audit_rows_are_append_only_and_ordered(client):
 
 
 def test_init_db_adds_tenant_columns_to_legacy_schema():
-    # Simulate a v0.1 database: drop the column, then re-run the bootstrap.
+    # Simulate an older database: drop the column, then re-run the bootstrap.
     with engine.begin() as conn:
         conn.execute(text("DROP INDEX IF EXISTS ix_runs_tenant_id"))
         conn.execute(text("ALTER TABLE runs DROP COLUMN tenant_id"))

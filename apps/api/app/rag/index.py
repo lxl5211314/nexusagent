@@ -1,6 +1,6 @@
 """Process-local corpus index, rebuilt lazily per knowledge base.
 
-MVP trade-off: corpora are small (hundreds of chunks), so the index lives in
+Trade-off: corpora are small (hundreds of chunks), so the index lives in
 memory and is rebuilt after ingestion. The ``VectorStore`` / ``GraphStore``
 interfaces are what a Milvus/Neo4j deployment implements instead.
 """

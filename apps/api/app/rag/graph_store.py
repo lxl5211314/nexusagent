@@ -1,6 +1,6 @@
 """A tiny term co-occurrence graph.
 
-MVP stands in for the Neo4j entity graph: nodes are salient terms, edges are
+The in-process graph stands in for the Neo4j entity graph: nodes are salient terms, edges are
 co-occurrence within a chunk, and ``expand`` walks one hop from query terms to
 chunks that never matched lexically. Same shape as the Neo4j adapter will be, so
 the retrieval channel does not change when it is swapped in.
