@@ -40,6 +40,16 @@
 6. `docker-compose.lite.yml` 两容器起服务，nginx 反代 `/api` 且 `proxy_buffering off`，SSE 不粘包
 7. 网关在开发模式（无 API Key）下透传调用方 `X-Tenant-Id`，不再硬编码 `local`
 
+## v0.2 真机联调（无 Docker，已通过）
+
+用嵌入式形态跑真实现，验证「换库不是换代码」：
+
+- **Milvus Lite 3.2.2**：`MilvusClient(uri=<file>.db)`，同一套 gRPC 协议；`kb_id` 标量过滤、HNSW/COSINE、`load_collection` 重开集合均实测
+- **Neo4j 5.26（neo4j-harness 进程内 Bolt）**：`tools/neo4j-embedded` 起 `bolt://127.0.0.1:7687`，`org.neo4j.test:neo4j-harness` 由 Maven Central 拉取
+- 全链路：ingest 2 块 → `vector=2`、`graph chunks=2 nodes=25 edges=80` → 三通道命中 2 条（scores 含 `dense/sparse/graph/rrf/rerank`）→ agent 作答 `answer_valid=true`、2 条 citation
+- 删除清理：`delete_kb` 后 `vector=0`、`graph chunks=0 nodes=0 edges=0`（`scripts/live_cleanup.py` 断言）
+- 联调中修掉的真实缺陷：`combinations(...)[:n]` 不可下标、集合 `released` 未 `load()`、`MilvusVectorStore` 缺 `stats`、删 KB/文档不清理外部库、Neo4j 空库通知刷屏
+
 ## 关键设计取舍
 
 - **DB 即事件源**：`run_events` 落库 → SSE 回放。免 sticky session，多实例一致。
@@ -67,8 +77,10 @@ cd apps/gateway && mvn spring-boot:run
 ## 测试
 
 ```bash
-cd apps/api && pytest          # 42 passed
-cd apps/gateway && mvn test    # 6 passed
+cd apps/api && pytest          # 48 passed, 1 skipped（联调用例默认跳过）
+cd apps/gateway && mvn test    # 7 passed
+# 真实后端联调
+cd apps/api && NEXUS_LIVE_STORES=1 NEXUS_NEO4J_URI=bolt://127.0.0.1:7687 pytest tests/test_live_stores.py
 ```
 
 ## 外部依赖（v0.2）

@@ -5,11 +5,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import DocumentOut, KnowledgeBaseIn, KnowledgeBaseOut
+from app.core.config import get_settings
 from app.core.tenant import get_tenant
 from app.db.base import get_db
 from app.db.models import Chunk, Document, KnowledgeBase
 from app.rag.index import invalidate
 from app.rag.ingest import DuplicateDocument, ingest_document
+from app.rag.stores import get_graph_store, get_vector_store
 from app.services import audit
 
 router = APIRouter(prefix="/kb", tags=["knowledge"])
@@ -92,6 +94,12 @@ def delete_kb(
     db.delete(kb)
     db.commit()
     invalidate(kb_id)
+    # External stores keep their own copies; drop them too or deleted corpora
+    # would keep coming back in hybrid retrieval.
+    if get_settings().vector_backend != "local":
+        get_vector_store().delete_kb(kb_id)
+    if get_settings().graph_backend != "local":
+        get_graph_store().delete_kb(kb_id)
 
 
 @router.post("/{kb_id}/documents", response_model=DocumentOut, status_code=201)
@@ -159,6 +167,13 @@ def delete_document(
     db.delete(doc)
     db.commit()
     invalidate(kb_id)
+    if get_settings().vector_backend != "local":
+        get_vector_store().delete_document(kb_id, doc_id)
+    if get_settings().graph_backend != "local":
+        # Graph nodes are per-chunk; a doc's terms must be recomputed from the
+        # remaining chunks, so a full rebuild is the correct granularity.
+        remaining = db.execute(select(Chunk).where(Chunk.kb_id == kb_id)).scalars().all()
+        get_graph_store().rebuild(kb_id, [(row.id, row.content) for row in remaining])
 
 
 def _to_out(kb: KnowledgeBase, docs: int, chunks: int) -> KnowledgeBaseOut:

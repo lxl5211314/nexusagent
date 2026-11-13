@@ -25,6 +25,18 @@ init_db()
 
 
 @pytest.fixture()
+def session():
+    """Plain ORM session on the test DB (for store round-trip checks)."""
+    from app.db.base import SessionLocal
+
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture()
 def seeded_kb():
     """Seed sample docs into the test DB; return kb_id."""
     from app.seed import seed_sample

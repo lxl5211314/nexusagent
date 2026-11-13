@@ -76,10 +76,35 @@ curl -N -X POST localhost:8080/api/v1/chat/stream \
   -d '{"question":"RRF 怎么融合？","kb_id":"<kb_id>"}'
 ```
 
+### 5. 真实 Milvus / Neo4j 联调（不需要 Docker）
+
+两者都有嵌入式形态，用真实现跑通整条链路而不起容器：
+
+```bash
+# Milvus Lite：一个文件就是一个 Milvus，协议与集群一致
+cd apps/api
+pip install -e ".[stores-lite]"
+NEXUS_VECTOR_BACKEND=milvus \
+NEXUS_MILVUS_URI="$PWD/../../data/milvus_live.db" \
+NEXUS_GRAPH_BACKEND=neo4j \
+NEXUS_NEO4J_URI=bolt://127.0.0.1:7687 \
+python -m scripts.live_check
+
+# Neo4j：Maven Central 拉 neo4j-harness，进程内起一个 Bolt 服务
+cd ../../tools/neo4j-embedded
+mvn -q compile dependency:build-classpath -Dmdep.outputFile=target/cp.txt
+java -cp "target/classes;target/cp.txt" Neo4jServer      # 打印 NEO4J_READY 后常驻
+
+# 回归：删除是否真的清空两个外部库
+cd ../../apps/api && python -m scripts.live_cleanup
+```
+
+`tests/test_live_stores.py` 默认跳过，设 `NEXUS_LIVE_STORES=1` 才会连真实后端。
+
 ## 测试
 
 ```bash
-cd apps/api && pytest        # 48 个用例，全部离线
+cd apps/api && pytest        # 48 个用例，全部离线（另有 1 个需 NEXUS_LIVE_STORES=1 的联调用例）
 cd apps/gateway && mvn test  # 7 个用例（限流器 + 鉴权/限流集成 + 租户头规范化）
 ```
 
@@ -122,7 +147,7 @@ apps/
       streaming/       # 事件源 + SSE 回放
       eval/            # 指标 + CLI
       api/routes/      # health/knowledge/chat/eval/system
-    tests/             # 42 个用例
+    tests/             # 48 个离线用例 + 1 个真实后端联调用例（默认跳过）
   gateway/             # Spring Boot 3.4 边缘网关（Java 21）
   web/                 # Vue3 + Vite 前端
 docker-compose.infra.yml   # etcd/minio/milvus/neo4j（+ MinerU profile）

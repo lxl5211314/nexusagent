@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from app.rag.stores.base import VectorRecord
+from app.rag.stores.base import StoreStats, VectorRecord
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +31,9 @@ class MilvusVectorStore:
         from pymilvus import DataType
 
         if self._client.has_collection(self.collection):
+            # A collection reopened from disk starts released in Lite/standalone;
+            # search fails with "call load() before search" until we load it.
+            self._client.load_collection(self.collection)
             return
 
         schema = self._client.create_schema(auto_id=False, enable_dynamic_field=False)
@@ -82,6 +85,15 @@ class MilvusVectorStore:
         )
 
     # -- reads --------------------------------------------------------------
+    def stats(self, kb_id: str) -> StoreStats:
+        rows = self._client.query(
+            collection_name=self.collection,
+            filter=f'kb_id == "{kb_id}"',
+            output_fields=["count(*)"],
+        )
+        total = int(rows[0]["count(*)"]) if rows else 0
+        return StoreStats(backend="milvus", chunks=total)
+
     def search(self, kb_id: str, vector: list[float], limit: int) -> list[tuple[str, float]]:
         hits = self._client.search(
             collection_name=self.collection,

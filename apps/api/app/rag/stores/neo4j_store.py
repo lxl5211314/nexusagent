@@ -26,7 +26,13 @@ class Neo4jGraphStore:
         from neo4j import GraphDatabase
 
         self.database = database
-        self._driver = GraphDatabase.driver(uri, auth=(user, password))
+        self._driver = GraphDatabase.driver(
+            uri,
+            auth=(user, password),
+            # Fresh databases legitimately have no Chunk/Term labels yet; the
+            # "label does not exist" notifications are pure noise in logs.
+            notifications_min_severity="OFF",
+        )
 
     # -- writes -------------------------------------------------------------
     def rebuild(self, kb_id: str, chunks: list[tuple[str, str]]) -> None:
@@ -38,7 +44,7 @@ class Neo4jGraphStore:
         for chunk_id, text in chunks:
             terms = list(dict.fromkeys(tokenize(text)))[:MAX_TERMS_PER_CHUNK]
             rows.append({"id": chunk_id, "text": text[:4000], "terms": terms})
-            pairs.extend(combinations(sorted(terms), 2)[:MAX_PAIRS_PER_CHUNK])
+            pairs.extend(list(combinations(sorted(terms), 2))[:MAX_PAIRS_PER_CHUNK])
 
         with self._driver.session(database=self.database) as session:
             session.run(
