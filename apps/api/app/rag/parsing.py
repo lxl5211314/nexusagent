@@ -1,0 +1,77 @@
+"""Document parsing for the MVP formats.
+
+The ``Parser`` protocol is the seam MinerU / PaddleOCR plug into in v0.2; the
+router below already picks a parser by extension+size, which is the same shape
+the multimodal router takes.
+"""
+
+from __future__ import annotations
+
+import io
+from pathlib import Path
+
+
+class UnsupportedFormat(ValueError):
+    pass
+
+
+class ParseError(RuntimeError):
+    pass
+
+
+def parse(filename: str, data: bytes) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix in {".md", ".markdown", ".txt", ".csv", ".json", ".yaml", ".yml", ".log"}:
+        return _decode(data)
+    if suffix == ".pdf":
+        return _parse_pdf(data)
+    if suffix == ".docx":
+        return _parse_docx(data)
+    raise UnsupportedFormat(f"unsupported format: {suffix or '(none)'} (supported: md, txt, pdf, docx)")
+
+
+def _decode(data: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def _parse_pdf(data: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:  # pragma: no cover - dependency is declared
+        raise ParseError("pypdf is not installed") from exc
+
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        pages = [(page.extract_text() or "").strip() for page in reader.pages]
+    except Exception as exc:  # noqa: BLE001 - surface as a domain error
+        raise ParseError(f"pdf parse failed: {exc}") from exc
+
+    text = "\n\n".join(page for page in pages if page)
+    if not text:
+        raise ParseError("pdf has no extractable text (scanned document?) — OCR parser lands in v0.2")
+    return text
+
+
+def _parse_docx(data: bytes) -> str:
+    try:
+        import docx
+    except ImportError as exc:  # pragma: no cover
+        raise ParseError("python-docx is not installed") from exc
+
+    try:
+        document = docx.Document(io.BytesIO(data))
+    except Exception as exc:  # noqa: BLE001
+        raise ParseError(f"docx parse failed: {exc}") from exc
+
+    blocks = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+    for table in document.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+            if cells:
+                blocks.append(" | ".join(cells))
+    return "\n".join(blocks)
