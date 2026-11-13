@@ -21,6 +21,10 @@ node_modules/
 dist/
 *.log
 
+# Java / Maven
+target/
+*.class
+
 # Env
 .env
 .env.*
