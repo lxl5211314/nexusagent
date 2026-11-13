@@ -20,6 +20,12 @@ const evalResult = ref(null)
 const error = ref('')
 const tenant = ref(localStorage.getItem('nexus.tenant') || 'local')
 const audit = ref([])
+const toolsOpen = ref(false)
+const mcpServers = ref([])
+const mcpTools = ref([])
+const mcpErrors = ref({})
+const skills = ref([])
+const toolFilter = ref('')
 
 function setTenant(value) {
   tenant.value = value.trim() || 'local'
@@ -52,6 +58,36 @@ async function refreshAudit() {
   const r = await api('/api/audit?limit=20')
   audit.value = r.ok ? await r.json() : []
 }
+
+async function refreshTools(force = false) {
+  const [servers, tools, cards] = await Promise.all([
+    api('/api/mcp/servers'),
+    api(force ? '/api/mcp/refresh' : '/api/mcp/tools', { method: force ? 'POST' : 'GET' }),
+    api('/api/skills'),
+  ])
+  mcpServers.value = servers.ok ? (await servers.json()).items : []
+  const payload = tools.ok ? await tools.json() : { items: [], errors: {} }
+  mcpTools.value = payload.items || []
+  mcpErrors.value = payload.errors || {}
+  skills.value = cards.ok ? (await cards.json()).items : []
+}
+
+function toggleTools() {
+  toolsOpen.value = !toolsOpen.value
+  if (toolsOpen.value) refreshTools()
+}
+
+const groupedTools = computed(() => {
+  const needle = toolFilter.value.trim().toLowerCase()
+  const groups = new Map()
+  for (const tool of mcpTools.value) {
+    const hay = `${tool.server}.${tool.name} ${tool.description}`.toLowerCase()
+    if (needle && !hay.includes(needle)) continue
+    if (!groups.has(tool.server)) groups.set(tool.server, [])
+    groups.get(tool.server).push(tool)
+  }
+  return [...groups.entries()].map(([server, items]) => ({ server, items }))
+})
 
 async function refreshDocs() {
   if (!activeKb.value) return
@@ -324,7 +360,10 @@ onMounted(() => { refreshKbs() })
       </div>
 
       <h3>文档上传</h3>
-      <button class="btn" @click="refreshAudit" style="width:100%;margin-bottom:8px">查看审计日志</button>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <button class="btn" @click="refreshAudit" style="flex:1">审计日志</button>
+        <button class="btn" @click="toggleTools" style="flex:1">工具与技能</button>
+      </div>
       <div v-if="activeKb">
         <div class="upload">
           <input type="file" ref="fileInput" @change="uploadFile" />
@@ -372,6 +411,34 @@ onMounted(() => { refreshKbs() })
 
     <div class="panel">
       <h3>运行面板</h3>
+      <template v-if="toolsOpen">
+        <div class="trace-block">
+          <div class="head">
+            工具目录 · {{ mcpTools.length }} 个
+            <button class="btn" style="float:right;padding:1px 6px" @click="refreshTools(true)">重新发现</button>
+          </div>
+          <div class="row" v-for="s in mcpServers" :key="s.name">
+            {{ s.name }} · {{ s.type }} · {{ s.connected ? '已连接' : '未连接' }}
+            <span v-if="mcpErrors[s.name]" style="color:var(--err)"> — {{ mcpErrors[s.name].slice(0, 60) }}</span>
+          </div>
+          <input v-model="toolFilter" placeholder="按名称过滤" style="width:100%;margin:6px 0" />
+          <template v-for="g in groupedTools" :key="g.server">
+            <div class="row" style="margin-top:6px;color:var(--muted)">{{ g.server }} · {{ g.items.length }}</div>
+            <div class="row tool-row" v-for="t in g.items" :key="t.server + t.name" :title="t.description">
+              <span class="tool-name">{{ t.name }}</span>
+              <span class="badge" :class="t.side_effect">{{ t.side_effect === 'read' ? '读' : '写' }}</span>
+            </div>
+          </template>
+          <div class="row" v-if="!groupedTools.length" style="color:var(--muted)">没有匹配的工具</div>
+        </div>
+        <div class="trace-block">
+          <div class="head">Skill 卡片 · {{ skills.length }}</div>
+          <div class="row" v-for="k in skills" :key="k.name" :title="k.description">
+            {{ k.name }}
+          </div>
+          <div class="row" v-if="!skills.length" style="color:var(--muted)">未配置 NEXUS_SKILLS_DIR</div>
+        </div>
+      </template>
       <template v-if="audit.length">
         <div class="trace-block">
           <div class="head">审计日志 · {{ tenant }}</div>

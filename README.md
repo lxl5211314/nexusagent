@@ -147,6 +147,8 @@ API Key 存在时按 key 映射租户，不存在时是开发模式（沿用调�
 
 工具分两类。内置的 `kb.search` / `kg.expand` / `calc.eval` 在进程内；外部能力走 MCP，运行时发现，不写死在代码里。
 
+![工具目录](docs/images/tools.png)
+
 `mcp.servers.json` 的格式和常见 MCP 宿主一致，从别的客户端拷一份就能用：
 
 ```json
