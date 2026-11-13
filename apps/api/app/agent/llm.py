@@ -104,7 +104,7 @@ class MockLLM(LLM):
         if not picked:
             return "知识库中命中的片段与问题相关性不足，无法给出有依据的回答。"
 
-        lead = "仅依据检索片段作答：" if strict else "根据知识库中的内容："
+        lead = "只按检索到的片段回答：" if strict else ""
         body = "；".join(f"{sentence} [{idx}]" for idx, sentence in picked)
         return f"{lead}{body}。"
 

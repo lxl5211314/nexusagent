@@ -30,6 +30,12 @@ const settingsOpen = ref(false)
 const settings = ref({ mcp_tool_router: true, mcp_cite_external: true })
 const mcpMeta = ref({ configured: false, timeout_s: 30 })
 const settingsSaving = ref(false)
+const backends = ref(null)
+
+async function refreshBackends() {
+  const r = await api('/api/system/backends')
+  backends.value = r.ok ? await r.json() : null
+}
 
 function setTenant(value) {
   tenant.value = value.trim() || 'local'
@@ -187,8 +193,43 @@ function fmtSize(n) {
   return `${(n / 1024).toFixed(1)} KB`
 }
 
+const STEP_COPY = {
+  plan: '拆解问题',
+  dispatch: '分发子任务',
+  worker: '检索并作答',
+  synthesize: '汇总答案',
+  finalize: '落库',
+}
+
+function stepLabel(key) {
+  if (key.startsWith('tool:')) return `调用 ${key.slice(5)}`
+  return STEP_COPY[key] || key || '步骤'
+}
+
+function stepMark(status) {
+  if (status === 'done') return '✓'
+  if (status === 'failed' || status === 'warn') return '!'
+  return '·'
+}
+
+function isExternal(citation) {
+  return (citation.doc_id || '').startsWith('mcp:') || citation.heading === '外部工具'
+}
+
+const examples = [
+  'RRF 是怎么融合三路结果的？',
+  '引用校验为什么不能只写进 prompt？',
+  '文档里说幻觉率怎么降下来的？',
+]
+
+function askExample(question) {
+  if (running.value || !activeKb.value) return
+  input.value = question
+  send()
+}
+
 function newHolder() {
-  return { role: 'assistant', text: '', raw: '', steps: [], citations: [], refused: false }
+  return { role: 'assistant', text: '', raw: '', steps: [], citations: [], refused: false, t0: Date.now(), ms: null }
 }
 
 // Maps the engine's SSE contract onto the view model. The backend emits
@@ -239,6 +280,7 @@ function applyEvent(holder, type, obj) {
     holder.text = stripMd(holder.raw)
     holder.citations = obj.citations || []
     holder.refused = !!obj.refused
+    holder.confidence = obj.confidence ?? null
     currentAnswer.value = holder.text
     currentCitations.value = holder.citations
     currentRefused.value = holder.refused
@@ -279,6 +321,7 @@ async function pump(res, holder) {
     }
   }
   if (runStatus.value !== 'failed') runStatus.value = 'completed'
+  if (holder.ms === null) holder.ms = Date.now() - holder.t0
 }
 
 async function send() {
@@ -358,89 +401,201 @@ async function runEval() {
   }
 }
 
-onMounted(() => { refreshKbs() })
+onMounted(() => { refreshKbs(); refreshBackends() })
 </script>
 
 <template>
   <div class="topbar">
-    <h1>NexusAgent</h1>
-    <span class="sub">企业知识智能体 · 私有部署 · 答案可溯源</span>
+    <div class="brand">
+      <span class="mark">N</span>
+      <div>
+        <h1>NexusAgent</h1>
+        <span class="sub">企业知识智能体 · 私有部署 · 答案可溯源</span>
+      </div>
+    </div>
     <span style="flex:1"></span>
-    <span v-if="runStatus==='running'" class="status-badge running">运行中</span>
-    <span v-else-if="runStatus==='completed'" class="status-badge completed">完成</span>
+    <span class="tenant-chip" title="所有请求携带 X-Tenant-Id，用于隔离知识库与审计">租户 {{ tenant }}</span>
+    <span v-if="runStatus==='running'" class="status-badge running"><i class="pulse"></i>运行中</span>
+    <span v-else-if="runStatus==='completed'" class="status-badge completed">已完成</span>
     <span v-else-if="runStatus==='failed'" class="status-badge failed">失败</span>
+    <span v-else class="status-badge idle">就绪</span>
   </div>
 
   <div class="main">
     <div class="sidebar">
-      <h3>租户</h3>
-      <input
-        class="tenant-input"
-        :value="tenant"
-        @change="setTenant($event.target.value); refreshKbs()"
-        placeholder="X-Tenant-Id"
-        title="所有请求都会带上 X-Tenant-Id，用于隔离知识库与审计"
-      />
-      <h3>知识库</h3>
-      <button class="btn" @click="createKb" style="width:100%;margin-bottom:8px">+ 新建知识库</button>
-      <div v-for="kb in kbs" :key="kb.id" class="kb-item" :class="{active: activeKb && activeKb.id===kb.id}" @click="selectKb(kb)">
-        <div class="name">{{ kb.name }}</div>
-        <div class="meta">{{ kb.document_count }} 文档 · {{ kb.chunk_count }} 块</div>
+      <div class="side-section">
+        <h3>工作空间</h3>
+        <input
+          class="tenant-input"
+          :value="tenant"
+          @change="setTenant($event.target.value); refreshKbs()"
+          placeholder="X-Tenant-Id"
+          title="所有请求都会带上 X-Tenant-Id，用于隔离知识库与审计"
+        />
       </div>
 
-      <h3>文档上传</h3>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
-        <button class="btn" @click="refreshAudit" style="flex:1">审计日志</button>
-        <button class="btn" @click="toggleTools" style="flex:1">工具与技能</button>
-        <button class="btn" @click="toggleSettings" style="flex:1">设置</button>
-      </div>
-      <div v-if="activeKb">
-        <div class="upload">
-          <input type="file" ref="fileInput" @change="uploadFile" />
+      <div class="side-section">
+        <h3>知识库 <span class="count">{{ kbs.length }}</span></h3>
+        <button class="btn primary block" @click="createKb">+ 新建知识库</button>
+        <div
+          v-for="kb in kbs"
+          :key="kb.id"
+          class="kb-item"
+          :class="{active: activeKb && activeKb.id===kb.id}"
+          @click="selectKb(kb)"
+        >
+          <div class="name">{{ kb.name }}</div>
+          <div class="meta">{{ kb.document_count }} 文档 · {{ kb.chunk_count }} 块</div>
         </div>
-        <div v-for="d in docs" :key="d.id" class="doc-item">
-          <div class="fname">{{ d.filename }}</div>
-          <div class="fmeta">{{ d.chunk_count }} 块 · {{ fmtSize(d.size) }}</div>
-          <div style="display:flex;gap:4px;margin-top:2px">
-            <button class="btn" @click="downloadDoc(d)" style="padding:2px 6px">原件</button>
-            <button class="btn" @click="deleteDoc(d.id)" style="padding:2px 6px">删除</button>
+        <p v-if="!kbs.length" class="hint">还没有知识库</p>
+      </div>
+
+      <div class="side-section">
+        <h3>文档 <span class="count" v-if="activeKb">{{ docs.length }}</span></h3>
+        <div v-if="activeKb">
+          <label class="upload">
+            <input type="file" ref="fileInput" @change="uploadFile" />
+            <span class="btn block">选择文件上传</span>
+          </label>
+          <div v-for="d in docs" :key="d.id" class="doc-item">
+            <div class="fname" :title="d.filename">{{ d.filename }}</div>
+            <div class="fmeta">{{ d.chunk_count }} 块 · {{ fmtSize(d.size) }}</div>
+            <div class="doc-actions">
+              <button class="btn ghost sm" @click="downloadDoc(d)">原件</button>
+              <button class="btn ghost sm danger" @click="deleteDoc(d.id)">删除</button>
+            </div>
           </div>
+          <p v-if="!docs.length" class="hint">上传 md / txt / pdf / docx 后会自动切块索引</p>
         </div>
+        <p v-else class="hint">先创建或选择知识库</p>
       </div>
-      <p v-else class="sub">先创建或选择知识库</p>
+
+      <div class="side-section actions">
+        <h3>面板</h3>
+        <button class="btn block" :class="{on: toolsOpen}" @click="toggleTools">工具与技能</button>
+        <button class="btn block" :class="{on: settingsOpen}" @click="toggleSettings">运行时设置</button>
+        <button class="btn block" @click="refreshAudit">审计日志</button>
+      </div>
     </div>
 
     <div class="chat">
-      <div class="messages">
-        <div v-if="!messages.length" class="sub" style="padding:30px;text-align:center">
-          提问关于知识库的问题，例如「RRF 融合公式的 k 取多少？」<br/>
-          支持断线续传：刷新后点「续传」。
+      <div class="messages" ref="scrollBox">
+        <div v-if="!messages.length" class="empty">
+          <div class="empty-mark">N</div>
+          <div class="empty-title">问你的知识库</div>
+          <p class="empty-sub">检索、引用、拒答都由代码把关，不靠模型自觉。</p>
+          <div class="examples">
+            <button
+              v-for="q in examples"
+              :key="q"
+              class="example"
+              :disabled="!activeKb"
+              @click="askExample(q)"
+            >
+              <span class="example-q">{{ q }}</span>
+              <span class="example-go">试试 →</span>
+            </button>
+          </div>
         </div>
         <div v-for="(m,i) in messages" :key="i" class="msg" :class="[m.role, m.refused?'refused':'']">
-          <div class="role">{{ m.role==='user'?'你':'NexusAgent' }}{{ m.refused?'（已拒答）':'' }}</div>
+          <div class="role">
+            <span class="avatar" :class="m.role">{{ m.role==='user'?'你':'N' }}</span>
+            <span v-if="m.role!=='user'">NexusAgent</span>
+            <span v-if="m.refused" class="tag warn">已拒答</span>
+            <span v-if="m.role==='assistant' && m.ms" class="tag quiet">{{ (m.ms/1000).toFixed(1) }}s</span>
+          </div>
           <div class="bubble">{{ m.text || (running && i===messages.length-1 ? '…' : '') }}</div>
           <div class="steps" v-if="m.steps && m.steps.length">
-            <div v-for="(s,j) in m.steps" :key="j" class="step" :class="{done: s.status==='done', active: s.status==='running'}">
-              <span class="dot"></span>{{ s.key }} — {{ s.detail }}
+            <div
+              v-for="(s,j) in m.steps"
+              :key="j"
+              class="step"
+              :class="[s.status]"
+            >
+              <span class="mark">{{ stepMark(s.status) }}</span>
+              <span class="step-name">{{ stepLabel(s.key) }}</span>
+              <span v-if="s.detail" class="step-detail">{{ s.detail }}</span>
             </div>
           </div>
-          <div class="citations" v-if="m.citations && m.citations.length">
-            引用：
-            <a v-for="c in m.citations" :key="c.chunk_id" :title="c.snippet">[{{ c.index }}] {{ c.doc_name }}<span v-if="c.heading"> · {{ c.heading }}</span></a>
+          <div class="evidence" v-if="m.role==='assistant' && (m.citations?.length || m.confidence!=null)">
+            <span v-if="m.confidence!=null" class="tag score">
+              置信度 {{ m.confidence.toFixed(2) }}
+            </span>
+            <a
+              v-for="c in m.citations"
+              :key="c.chunk_id"
+              class="cite"
+              :class="{ ext: isExternal(c) }"
+              :title="c.snippet"
+            >
+              <b>{{ c.index }}</b>
+              <span class="cite-name">{{ c.doc_name }}</span>
+              <span v-if="c.heading" class="cite-head">· {{ c.heading }}</span>
+              <span v-if="isExternal(c)" class="cite-label">外部</span>
+            </a>
           </div>
         </div>
       </div>
       <div class="inputbar">
-        <input v-model="input" @keyup.enter="send" placeholder="输入问题，Enter 发送" :disabled="running" />
-        <button @click="send" :disabled="running || !activeKb">发送</button>
-        <button @click="resumeRun" :disabled="!runId || running" title="从 DB 回放断线前事件">续传</button>
-        <button @click="runEval" :disabled="!activeKb || running" title="跑评估集">评估</button>
+        <div class="composer">
+          <input
+            v-model="input"
+            @keyup.enter="send"
+            placeholder="输入问题，Enter 发送"
+            :disabled="running"
+          />
+          <span class="composer-hint">{{ running ? '生成中…' : '答案会标注来源，无法溯源时直接拒答' }}</span>
+        </div>
+        <button class="btn primary" @click="send" :disabled="running || !activeKb">发送</button>
+        <button class="btn" @click="resumeRun" :disabled="!runId || running" title="从 DB 回放断线前事件">续传</button>
+        <button class="btn ghost" @click="runEval" :disabled="!activeKb || running" title="跑 27 题评估集">评估</button>
       </div>
-      <p v-if="error" style="color:var(--err);padding:0 12px;margin:0 0 8px">{{ error }}</p>
+      <p v-if="error" class="error-line">{{ error }}</p>
     </div>
 
     <div class="panel">
       <h3>运行面板</h3>
+
+      <div class="trace-block">
+        <div class="head">
+          引擎状态
+          <button class="btn sm" @click="refreshBackends">刷新</button>
+        </div>
+        <template v-if="backends">
+          <div class="metric"><span>向量库</span><span :class="backends.vector.ok ? 'ok' : 'bad'">{{ backends.vector.backend }}</span></div>
+          <div class="metric"><span>知识图谱</span><span :class="backends.graph.ok ? 'ok' : 'bad'">{{ backends.graph.backend }}</span></div>
+          <div class="metric"><span>原件存储</span><span :class="backends.objects?.ok ? 'ok' : 'bad'">{{ backends.objects?.backend || '—' }}</span></div>
+          <div class="metric"><span>OCR</span><span :class="backends.ocr.backend === 'none' ? 'dim' : (backends.ocr.ok ? 'ok' : 'bad')">{{ backends.ocr.backend }}</span></div>
+          <div class="metric"><span>模型 / 嵌入</span><span>{{ backends.llm }} · {{ backends.embedding.provider }}({{ backends.embedding.dim }})</span></div>
+        </template>
+        <div class="row" v-else>读取中…</div>
+      </div>
+
+      <div class="trace-block" v-if="activeKb">
+        <div class="head">当前知识库</div>
+        <div class="metric"><span>文档</span><span>{{ activeKb.document_count }}</span></div>
+        <div class="metric"><span>文本块</span><span>{{ activeKb.chunk_count }}</span></div>
+        <div class="row" style="margin-top:6px;color:var(--muted)">
+          三路召回 → RRF → 重排 → 引用校验
+        </div>
+      </div>
+
+      <div class="trace-block" v-if="evalResult">
+        <div class="head">最近一次评估 · {{ evalResult.total }} 题</div>
+        <div class="metric"><span>Recall@5</span><span class="ok">{{ evalResult.recall_at_5 }}</span></div>
+        <div class="metric"><span>MRR@5</span><span>{{ evalResult.mrr_at_5 }}</span></div>
+        <div class="metric"><span>Faithfulness</span><span>{{ evalResult.faithfulness }}</span></div>
+        <div class="metric"><span>零命中</span><span>{{ evalResult.zero_hit }}</span></div>
+      </div>
+
+      <div class="trace-block" v-if="audit.length">
+        <div class="head">审计 · 最近 {{ audit.length }} 条</div>
+        <div class="row" v-for="a in audit.slice(0, 8)" :key="a.id">
+          <span style="color:var(--text-dim)">{{ a.action }}</span>
+          <span v-if="a.resource_id"> · {{ a.resource_id.slice(0, 18) }}</span>
+        </div>
+      </div>
+
       <template v-if="settingsOpen">
         <div class="trace-block">
           <div class="head">运行时开关</div>
@@ -463,13 +618,13 @@ onMounted(() => { refreshKbs() })
         <div class="trace-block">
           <div class="head">
             工具目录 · {{ mcpTools.length }} 个
-            <button class="btn" style="float:right;padding:1px 6px" @click="refreshTools(true)">重新发现</button>
+            <button class="btn sm" @click="refreshTools(true)">重新发现</button>
           </div>
           <div class="row" v-for="s in mcpServers" :key="s.name">
             {{ s.name }} · {{ s.type }} · {{ s.connected ? '已连接' : '未连接' }}
             <span v-if="mcpErrors[s.name]" style="color:var(--err)"> — {{ mcpErrors[s.name].slice(0, 60) }}</span>
           </div>
-          <input v-model="toolFilter" placeholder="按名称过滤" style="width:100%;margin:6px 0" />
+          <input v-model="toolFilter" class="tenant-input" placeholder="按名称过滤" style="margin:6px 0" />
           <template v-for="g in groupedTools" :key="g.server">
             <div class="row" style="margin-top:6px;color:var(--muted)">{{ g.server }} · {{ g.items.length }}</div>
             <div class="row tool-row" v-for="t in g.items" :key="t.server + t.name" :title="t.description">

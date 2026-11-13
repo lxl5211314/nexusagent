@@ -77,7 +77,9 @@ def test_chat_sse(client):
         assert resp.status_code == 200
         body = resp.read().decode()
         assert "event: run.finished" in body
-        assert "[1]" in body or "guard.violation" in body
+        # Tokens are sliced, so a citation marker can straddle two frames;
+        # assert on the structured citations instead of the raw text.
+        assert '"citations": [{' in body or "guard.violation" in body
     invalidate(kb_id)
 
 
