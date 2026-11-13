@@ -97,7 +97,16 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 - 资源查询统一走 `_get_owned()`，跨租户返回 404 而不是 403。
 - 网关的 `ProxyController` 对每个上游请求显式设置租户头。`WebClient` 不会自动透传 exchange 的 header，漏写就会静默变成默认租户，隔离看起来生效、实际没有。
 
-## 7. 评估
+## 7. MCP 与 Skill
+
+- 传输只有两种：stdio（子进程，换行分隔的 JSON-RPC）和 streamable HTTP（POST，响应可能是 `text/event-stream`，从 `data:` 帧里取 JSON-RPC）。`initialize` 之后发 `notifications/initialized`，再走 `tools/list` / `tools/call`。
+- 连接是懒的，进程启动不 spawn；某个 server 抛错只从目录里移除它自己，`errors` 保留原因，其它 server 继续可用。
+- 只读判定：`readOnlyHint` → `destructiveHint` → 动词启发式。注解优先，因为 server 最清楚自己的副作用；启发式只兜住没写注解的 server。
+- 工具名统一为 `mcp.<server>.<tool>`，注册进同一个 `ToolRegistry`，权限码 `mcp:<server>` / `mcp:<server>:write`，写工具必须带审批令牌。
+- Skill 是磁盘上的 `<name>/SKILL.md`。列表接口只返回 front matter，正文按名字单独取，避免把全部提示词一次性塞进上下文。
+- 当前只在 `plan` 节点做一次发现（进程级幂等）。要做工具级懒加载，需要把目录按子任务相关度过滤后再注入，那是下一步。
+
+## 8. 评估
 
 - `recall@k`：gold 片段是否出现在前 k 个块里，按 gold 数量取比例。
 - `mrr@k`：第一个命中块的倒数排名。

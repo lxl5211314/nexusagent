@@ -143,11 +143,42 @@ mvn spring-boot:run          # :8080，转发到 127.0.0.1:8017
 
 API Key 存在时按 key 映射租户，不存在时是开发模式（沿用调用方的 `X-Tenant-Id`）。限流按租户做 60 秒固定窗口。
 
+## 扩展：MCP 与 Skill
+
+工具分两类。内置的 `kb.search` / `kg.expand` / `calc.eval` 在进程内；外部能力走 MCP，运行时发现，不写死在代码里。
+
+`mcp.servers.json` 的格式和常见 MCP 宿主一致，从别的客户端拷一份就能用：
+
+```json
+{
+  "servers": {
+    "filesystem": {"type": "local", "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/data/shared"]},
+    "github": {"type": "remote", "url": "https://api.githubcopilot.com/mcp/", "headers": {"Authorization": "Bearer ${GITHUB_MCP_TOKEN}"}}
+  }
+}
+```
+
+```bash
+export NEXUS_MCP_CONFIG=$PWD/apps/api/mcp.servers.json
+python -m uvicorn app.main:app --port 8017
+curl localhost:8017/api/mcp/tools | jq '.items[] | {server, name, side_effect}'
+```
+
+几个实现上的决定：
+
+- **懒连接**。进程启动不拉起任何子进程；第一次 `tools/list` 才 spawn，某个 server 挂了只丢它自己的条目，`errors` 里能看到原因，其它 server 照常工作。
+- **只读判断三档**。优先信 server 的 `annotations.readOnlyHint`；没有就 `destructiveHint`；再没有按动词猜（`get/list/read/search` 算读）。猜不准时默认读，但写工具一律要 `approval_token` 才放行。
+- **两种传输**。stdio 用换行分隔的 JSON-RPC（子进程 stdin/stdout），remote 用 streamable HTTP，响应是 SSE 时从 `data:` 帧里取。
+- **同一套门禁**。MCP 工具注册进 `ToolRegistry` 后，权限码是 `mcp:<server>`（写是 `mcp:<server>:write`），和内置工具走同一个 `invoke`。
+
+Skill 是提示词侧的能力：一个目录一份 `SKILL.md`，front matter 写 `name` / `description`，正文是步骤。`GET /api/skills` 只列卡片，`GET /api/skills/{name}` 才返回正文——按需加载，不把全部提示词塞进上下文。
+
 ## 目录
 
 ```
 apps/api      FastAPI 引擎
   app/agent       LangGraph 编排、LLM 双模、工具注册
+  app/mcp         MCP 客户端（stdio / streamable HTTP）与运行时发现
   app/rag         解析/分块/嵌入/BM25/RRF/重排/图谱/检索
     stores/       VectorStore / GraphStore 协议与 local/milvus/neo4j 实现
   app/guard       引用守卫

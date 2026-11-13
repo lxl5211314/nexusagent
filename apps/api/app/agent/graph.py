@@ -64,6 +64,9 @@ def route(state: AgentState) -> str:
 async def plan(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     settings = get_settings()
     _emit(config, "step.started", {"node": "plan", "note": "意图理解与任务拆解"})
+    from app.mcp.catalog import ensure_loaded
+
+    ensure_loaded()
     subtasks = await get_llm().plan(state["question"], settings.max_subtasks)
     return {"plan": subtasks}
 

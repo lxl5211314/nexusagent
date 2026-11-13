@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     # redis://127.0.0.1:6379/0 to fan events out across processes.
     redis_url: str = ""
 
+    # --- Extensions --------------------------------------------------------
+    # A JSON file with {"servers": {...}}; empty means no MCP servers.
+    mcp_config: str = ""
+    mcp_timeout_s: float = 30.0
+    # Directory of <name>/SKILL.md cards; empty means none.
+    skills_dir: str = ""
+
     # S3/MinIO endpoint, credentials and bucket. Only read when
     # object_backend=s3; local mode keeps raw files under data/uploads.
     s3_endpoint: str = ""

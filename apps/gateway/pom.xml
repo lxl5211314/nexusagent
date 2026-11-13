@@ -13,7 +13,7 @@
 
   <groupId>com.nexusagent</groupId>
   <artifactId>gateway</artifactId>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
   <name>nexusagent-gateway</name>
   <description>Edge gateway for NexusAgent: API-key auth, tenant mapping, rate limiting, SSE proxy</description>
 

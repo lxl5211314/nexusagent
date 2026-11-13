@@ -36,3 +36,5 @@ Thumbs.db
 # IDE
 .idea/
 .vscode/
+# Local MCP servers (may carry tokens)
+mcp.servers.json

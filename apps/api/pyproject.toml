@@ -1,6 +1,6 @@
 [project]
 name = "nexusagent-api"
-version = "0.3.0"
+version = "0.4.0"
 description = "NexusAgent: enterprise knowledge agent platform"
 requires-python = ">=3.11"
 dependencies = [
@@ -49,5 +49,5 @@ target-version = "py311"
 ignore = ["B008"]
 
 [tool.setuptools]
-packages = ["app", "app.api", "app.api.routes", "app.agent", "app.core", "app.db", "app.eval", "app.guard", "app.rag", "app.rag.stores", "app.services", "app.storage", "app.streaming"]
+packages = ["app", "app.api", "app.api.routes", "app.agent", "app.core", "app.db", "app.eval", "app.guard", "app.mcp", "app.rag", "app.rag.stores", "app.services", "app.storage", "app.streaming"]
 include-package-data = false
