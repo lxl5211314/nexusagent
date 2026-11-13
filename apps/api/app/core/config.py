@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     # A JSON file with {"servers": {...}}; empty means no MCP servers.
     mcp_config: str = ""
     mcp_timeout_s: float = 30.0
+    # Let a subtask that retrieval could not answer consult a read-only MCP tool.
+    mcp_tool_router: bool = True
     # Directory of <name>/SKILL.md cards; empty means none.
     skills_dir: str = ""
 

@@ -216,3 +216,106 @@ def test_read_only_inference_prefers_annotations():
     assert infer_read_only("search_procedures", "search", {}) is True
     assert infer_read_only("delete_document", "delete a document", {}) is False
     assert infer_read_only("mystery", "does something", {}) is True
+
+def test_router_picks_read_only_tool_with_defaults_only():
+    from app.mcp.catalog import MCPToolInfo
+    from app.mcp.router import build_arguments, choose_tool
+
+    tools = [
+        MCPToolInfo("browser", "list_pages", "List open browser pages", {"type": "object"}, True),
+        MCPToolInfo("browser", "close_page", "Close one page", {"type": "object"}, False),
+        MCPToolInfo(
+            "browser",
+            "take_snapshot",
+            "Snapshot a page",
+            {"type": "object", "properties": {"pageId": {"type": "string"}}, "required": ["pageId"]},
+            True,
+        ),
+    ]
+    choice = choose_tool("list open browser pages", tools)
+    assert choice is not None and choice.name == "list_pages"
+    assert choice.arguments == {}
+    assert choice.spec_name == "mcp.browser.list_pages"
+
+    # A read tool whose required argument has no default is skipped, not faked.
+    assert build_arguments({"type": "object", "properties": {"pageId": {"type": "string"}}, "required": ["pageId"]}) is None
+    assert choose_tool("snapshot a page", tools, threshold=0.1) is None
+
+
+def test_enrich_calls_the_registry_with_scoped_permission():
+    from app.agent.tools import ToolRegistry, ToolSpec
+    from app.mcp.catalog import MCPCatalog, MCPToolInfo
+    from app.mcp.router import enrich_with_mcp
+
+    catalog = MCPCatalog([], client_factory=lambda _: FakeClient([]))
+    catalog._tools = [MCPToolInfo("browser", "list_pages", "List open browser pages", {"type": "object"}, True)]
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="mcp.browser.list_pages",
+            description="list pages",
+            input_schema={"type": "object"},
+            output_schema={"type": "object"},
+            permission="mcp:browser",
+            side_effect="read",
+            handler=lambda args, ctx: {"text": "page-1"},
+        )
+    )
+    base = ToolContext(kb_id="k", run_id="r", permissions={"kb:read"})
+    result = enrich_with_mcp("list browser pages", base, registry, catalog)
+    assert result is not None
+    choice, call = result
+    assert choice.name == "list_pages"
+    assert call.ok and call.data["text"] == "page-1"
+
+def test_mcp_call_is_audited(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.api.routes import extensions
+    from app.main import app
+    from app.mcp.catalog import MCPToolInfo
+
+    catalog = MCPCatalog([], client_factory=lambda _: FakeClient([]))
+    catalog._tools = [
+        MCPToolInfo("browser", "list_pages", "List open browser pages", {"type": "object"}, True)
+    ]
+    monkeypatch.setattr(extensions, "get_catalog", lambda: catalog)
+    headers = {"X-Tenant-Id": "audit-desk"}
+    client = TestClient(app)
+
+    missing = client.post(
+        "/api/mcp/call", json={"server": "browser", "tool": "nope", "arguments": {}}, headers=headers
+    )
+    assert missing.status_code == 404
+
+    logs = client.get("/api/audit?limit=50", headers=headers).json()
+    entries = [item for item in logs if item["action"] == "mcp.call"]
+    assert entries and entries[0]["resource_id"] == "browser.nope"
+    assert "missing" in entries[0]["detail"]
+
+def test_ensure_loaded_does_not_latch_on_empty_config(monkeypatch):
+    from app.agent.tools import ToolRegistry
+    from app.mcp import catalog as catalog_module
+    from app.mcp.catalog import MCPToolInfo
+
+    calls = {"n": 0}
+
+    class Catalog:
+        def servers(self):
+            calls["n"] += 1
+            return ["srv"] if calls["n"] > 1 else []
+
+        def tools(self):
+            return [MCPToolInfo("srv", "ping", "Ping", {"type": "object"}, True)]
+
+        def call(self, server, tool, arguments):
+            return {"is_error": False, "text": "pong", "content": []}
+
+    monkeypatch.setattr(catalog_module, "get_catalog", lambda: Catalog())
+    catalog_module.reset_loaded_flag()
+    registry = ToolRegistry()
+
+    assert catalog_module.ensure_loaded() == 0  # no servers yet: stay unlatched
+    assert catalog_module.register_catalog_tools(registry, Catalog()) == 1
+    assert registry.list()[0]["name"] == "mcp.srv.ping"
+    catalog_module.reset_loaded_flag()

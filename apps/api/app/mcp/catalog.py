@@ -227,14 +227,17 @@ def ensure_loaded() -> int:
     global _loaded
     if _loaded:
         return 0
-    _loaded = True
     try:
         catalog = get_catalog()
         if not catalog.servers():
+            # Configuration may appear later (a test, a restarted process); do not
+            # latch the flag on an empty config or the tools never get registered.
             return 0
         from app.agent.tools import registry
 
-        return register_catalog_tools(registry, catalog)
+        added = register_catalog_tools(registry, catalog)
+        _loaded = True
+        return added
     except Exception as exc:  # noqa: BLE001 - extensions must not break the agent
         log.warning("mcp discovery skipped: %s", exc)
         return 0

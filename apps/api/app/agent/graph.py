@@ -89,6 +89,7 @@ def fan_out(state: AgentState) -> list[Send]:
 
 
 async def worker(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+    settings = get_settings()
     task = state["task"]
     kb_id = state["kb_id"]
     run_id = state["run_id"]
@@ -110,6 +111,19 @@ async def worker(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         summary = "该子问题未检索到足够相关片段"
     else:
         summary = f"检索失败：{result.error}"
+
+    if settings.mcp_tool_router and len(contexts) < 2:
+        from app.mcp.catalog import get_catalog
+        from app.mcp.router import enrich_with_mcp
+
+        extra = enrich_with_mcp(task.question, ctx, registry, get_catalog())
+        if extra is not None:
+            choice, call = extra
+            if call.ok:
+                text = str(call.data.get("text", ""))[:160] if isinstance(call.data, dict) else ""
+                summary += f"；外部工具 {choice.spec_name} 返回：{text}"
+            else:
+                summary += f"；外部工具 {choice.spec_name} 调用失败：{call.error[:80]}"
 
     return {
         "findings": [Finding(task_id=task.id, question=task.question, summary=summary)],
