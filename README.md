@@ -108,6 +108,20 @@ curl -s localhost:8017/api/system/backends           # 确认真的连上了
 
 没有容器环境也能验证：`pip install -e ".[stores-lite]"` 用 Milvus Lite，`tools/neo4j-embedded` 用 `neo4j-harness` 起进程内 Bolt，跑 `python -m scripts.live_check`。
 
+### 换成 BGE 嵌入
+
+默认的 `hash` 嵌入是为了离线可跑，不是效果方案。接真模型只要改环境变量——任何 OpenAI 兼容的 `/embeddings` 都行：
+
+```bash
+NEXUS_EMBEDDING_PROVIDER=openai
+NEXUS_EMBEDDING_MODEL=BAAI/bge-m3
+NEXUS_EMBEDDING_DIM=1024          # 必须和模型输出一致；换维度要重建集合并重新入库
+NEXUS_LLM_BASE_URL=https://api.siliconflow.cn/v1
+NEXUS_LLM_API_KEY=sk-...
+```
+
+维度写错的典型症状是入库时报 `vector dimension mismatch`：Milvus 集合在第一次创建时就固定了 `dim`，改维度需要 `delete_collection` 后重建。维度不一致的库混用没有意义，所以这里不做自动迁移。
+
 ## 原件与扫描件
 
 上传的原始文件默认落在 `data/uploads`，也可以直接丢进 MinIO：`pip install -e ".[objects]"`，然后设 `NEXUS_OBJECT_BACKEND=s3` 与 `NEXUS_S3_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET`（compose 里的 minio 就是现成的）。`GET /api/kb/{id}/documents/{doc_id}/content` 取回原件，删文档时连同对象一起清。
