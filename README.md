@@ -1,5 +1,7 @@
 # NexusAgent
 
+[![ci](https://github.com/lxl5211314/nexusagent/actions/workflows/ci.yml/badge.svg)](https://github.com/lxl5211314/nexusagent/actions/workflows/ci.yml)
+
 面向企业私有知识库的多智能体问答平台。答案强制绑定原文块，检索不到就拒答，模型与向量库都可以换。
 
 ![NexusAgent 界面](docs/images/ui.png)
@@ -13,7 +15,7 @@
 
 所以这个项目的目标不是「让模型答得更像人」，而是**让每一句回答都能指回一个具体的文档块**；指不回去，就重写或者拒答。
 
-三个硬约束决定了后面的设计：
+四个硬约束决定了后面的设计：
 
 - 引用必须落到块级，而不是文档级 —— 否则「出处」没有校验价值。
 - 引用要能点开看到原文 —— 只给文件名，读者还是得自己去翻；点开直接看到被引用的那一块，才谈得上核对。
@@ -211,6 +213,12 @@ tools         neo4j-embedded（本地 Bolt，联调用）
 - 默认 SQLite 单机；多实例部署需要换 PostgreSQL，并保证 `run_events` 共享。
 - 扫描件依赖外部 OCR 服务，仓库里不带模型权重。
 - 评估集规模小，只能证明链路没坏，证明不了效果上限。
+
+## 关于这个仓库
+
+这个仓库是整理后的版本：需求、取舍、测试和文档都在同一处，能跑的东西都跑过一遍才提交。早期探索时的原型、废弃分支和内部环境的配置没有带进来，所以提交历史不完整——这解释的是历史，不是设计：每个决定为什么这么做，都在上表和 `docs/DESIGN.md` 里，可以逐条对着代码看。
+
+如果你只想验证它是不是能跑，三步：`pip install -e ".[stores,events]" pytest pytest-asyncio fakeredis` → `python -m app.seed` → `pytest`；再开 `uvicorn app.main:app` 和 `npm run dev` 就能看到界面，不需要 Docker、不需要任何 Key。
 
 ## License
 
