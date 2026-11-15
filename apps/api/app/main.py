@@ -15,6 +15,7 @@ from app.api.routes import (
     extensions,
     health,
     knowledge,
+    org_routes,
     settings_routes,
     system,
     uploads,
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(extensions.router, prefix="/api")
     app.include_router(settings_routes.router, prefix="/api")
     app.include_router(uploads.router, prefix="/api")
+    app.include_router(org_routes.router, prefix="/api")
 
     if STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="web")

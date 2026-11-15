@@ -5,9 +5,9 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import DocumentOut, KnowledgeBaseIn, KnowledgeBaseOut
+from app.core import org
 from app.core.config import get_settings
 from app.core.rbac import Identity, require_permission
-from app.core.tenant import get_tenant
 from app.db.base import get_db
 from app.db.models import Chunk, Document, KnowledgeBase
 from app.rag.index import invalidate
@@ -19,13 +19,16 @@ from app.storage import get_object_store
 router = APIRouter(prefix="/kb", tags=["knowledge"])
 
 
-def _get_owned(db: Session, kb_id: str, tenant_id: str) -> KnowledgeBase:
-    """Fetch a KB the tenant actually owns.
+def _get_owned(db: Session, kb_id: str, identity: Identity) -> KnowledgeBase:
+    """Fetch a KB this caller may see.
 
     A cross-tenant id answers 404, never 403: existence itself is information.
+    The same holds for a KB that exists but sits outside the caller's
+    department subtree — saying "forbidden" would leak the id.
     """
+    scope = org.resolve_scope(db, identity)
     kb = db.get(KnowledgeBase, kb_id)
-    if kb is None or kb.tenant_id != tenant_id:
+    if kb is None or kb.tenant_id != scope.tenant_id or not org.can_access_kb(db, scope, kb):
         raise HTTPException(404, "knowledge base not found")
     return kb
 
@@ -37,7 +40,21 @@ def create_kb(
     identity: Identity = Depends(require_permission("kb:write")),
 ) -> KnowledgeBase:
     tenant_id = identity.tenant_id
-    kb = KnowledgeBase(name=payload.name, description=payload.description, tenant_id=tenant_id)
+    scope = org.resolve_scope(db, identity)
+    if payload.department_id:
+        path = org.dept_path(db, tenant_id, payload.department_id)
+        if path is None:
+            raise HTTPException(404, "department not found")
+        if not scope.unrestricted and not (
+            scope.dept_path and path.startswith(scope.dept_path)
+        ):
+            raise HTTPException(403, "department outside your scope")
+    kb = KnowledgeBase(
+        name=payload.name,
+        description=payload.description,
+        tenant_id=tenant_id,
+        department_id=payload.department_id,
+    )
     db.add(kb)
     db.flush()
     audit.record(
@@ -59,7 +76,7 @@ def list_kb(
     db: Session = Depends(get_db),
     identity: Identity = Depends(require_permission("kb:read")),
 ) -> list[KnowledgeBase]:
-    tenant_id = identity.tenant_id
+    scope = org.resolve_scope(db, identity)
     rows = db.execute(
         select(
             KnowledgeBase,
@@ -70,7 +87,7 @@ def list_kb(
         )
         .outerjoin(Document, Document.kb_id == KnowledgeBase.id)
         .outerjoin(Chunk, Chunk.kb_id == KnowledgeBase.id)
-        .where(KnowledgeBase.tenant_id == tenant_id)
+        .where(org.visible_kb_filter(scope))
         .group_by(KnowledgeBase.id)
     ).all()
     return [_to_out(kb, docs or 0, chunks or 0) for kb, docs, chunks in rows]
@@ -82,8 +99,7 @@ def get_kb(
     db: Session = Depends(get_db),
     identity: Identity = Depends(require_permission("kb:read")),
 ) -> KnowledgeBase:
-    tenant_id = identity.tenant_id
-    kb = _get_owned(db, kb_id, tenant_id)
+    kb = _get_owned(db, kb_id, identity)
     docs = db.execute(select(func.count(Document.id)).where(Document.kb_id == kb_id)).scalar_one()
     chunks = db.execute(select(func.count(Chunk.id)).where(Chunk.kb_id == kb_id)).scalar_one()
     return _to_out(kb, docs, chunks)
@@ -96,7 +112,7 @@ def delete_kb(
     identity: Identity = Depends(require_permission("kb:write")),
 ) -> None:
     tenant_id = identity.tenant_id
-    kb = _get_owned(db, kb_id, tenant_id)
+    kb = _get_owned(db, kb_id, identity)
     audit.record(
         db,
         tenant_id=tenant_id,
@@ -126,7 +142,7 @@ async def upload_document(
     identity: Identity = Depends(require_permission("doc:write")),
 ) -> Document:
     tenant_id = identity.tenant_id
-    _get_owned(db, kb_id, tenant_id)
+    _get_owned(db, kb_id, identity)
     data = await file.read()
     filename = file.filename or "unnamed"
     try:
@@ -151,9 +167,9 @@ async def upload_document(
 
 @router.get("/{kb_id}/documents", response_model=list[DocumentOut])
 def list_documents(
-    kb_id: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant)
+    kb_id: str, db: Session = Depends(get_db), identity: Identity = Depends(require_permission("kb:read"))
 ) -> list[Document]:
-    _get_owned(db, kb_id, tenant_id)
+    _get_owned(db, kb_id, identity)
     rows = (
         db.execute(select(Document).where(Document.kb_id == kb_id).order_by(Document.created_at))
         .scalars()
@@ -167,14 +183,14 @@ def get_chunk(
     kb_id: str,
     chunk_id: str,
     db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_tenant),
+    identity: Identity = Depends(require_permission("kb:read")),
 ) -> dict:
     """Full text of one chunk, for the citation drawer.
 
     Search returns a compressed slice of the chunk; the drawer needs the
     original so the reader can check what was actually indexed.
     """
-    _get_owned(db, kb_id, tenant_id)
+    _get_owned(db, kb_id, identity)
     chunk = db.get(Chunk, chunk_id)
     if chunk is None or chunk.kb_id != kb_id:
         raise HTTPException(404, "chunk not found")
@@ -194,9 +210,9 @@ def download_document(
     kb_id: str,
     doc_id: str,
     db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_tenant),
+    identity: Identity = Depends(require_permission("kb:read")),
 ) -> Response:
-    _get_owned(db, kb_id, tenant_id)
+    _get_owned(db, kb_id, identity)
     doc = db.get(Document, doc_id)
     if doc is None or doc.kb_id != kb_id:
         raise HTTPException(404, "document not found")
@@ -221,7 +237,7 @@ def delete_document(
     identity: Identity = Depends(require_permission("doc:write")),
 ) -> None:
     tenant_id = identity.tenant_id
-    _get_owned(db, kb_id, tenant_id)
+    _get_owned(db, kb_id, identity)
     doc = db.get(Document, doc_id)
     if doc is None or doc.kb_id != kb_id:
         raise HTTPException(404, "document not found")
@@ -252,6 +268,7 @@ def _to_out(kb: KnowledgeBase, docs: int, chunks: int) -> KnowledgeBaseOut:
         id=kb.id,
         name=kb.name,
         description=kb.description,
+        department_id=kb.department_id,
         document_count=docs,
         chunk_count=chunks,
         created_at=kb.created_at,

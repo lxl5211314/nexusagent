@@ -34,16 +34,19 @@ public class TraceFilter implements WebFilter {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         String incoming = exchange.getRequest().getHeaders().getFirst(TRACE_HEADER);
-        String traceId = incoming == null || incoming.isBlank()
-                ? UUID.randomUUID().toString().replace("-", "").substring(0, 16)
-                : incoming.trim().substring(0, Math.min(32, incoming.trim().length()));
+        String traced = TraceBridge.currentTraceId();
+        String traceId = traced != null
+                ? traced
+                : incoming == null || incoming.isBlank()
+                        ? UUID.randomUUID().toString().replace("-", "").substring(0, 16)
+                        : incoming.trim().substring(0, Math.min(32, incoming.trim().length()));
 
         exchange.getAttributes().put(TRACE_ATTRIBUTE, traceId);
         exchange.getResponse().getHeaders().set(TRACE_HEADER, traceId);
+        MDC.put("traceId", traceId);
 
         String route = route(exchange.getRequest().getPath().value());
         Timer.Sample sample = Timer.start(meters);
-        MDC.put("traceId", traceId);
         try {
             return chain.filter(exchange).doFinally(signal -> {
                 sample.stop(Timer.builder("gateway.request")

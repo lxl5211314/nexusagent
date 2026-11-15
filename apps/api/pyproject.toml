@@ -26,6 +26,8 @@ events = ["redis>=5.0"]
 postgres = ["psycopg[binary]>=3.1"]
 # MinIO / S3 storage for the uploaded originals (object_backend=s3).
 objects = ["boto3>=1.34"]
+# The SkyWalking Python agent; run the API with `sw-python run uvicorn app.main:app`.
+apm = ["apache-skywalking>=0.8"]
 
 [dependency-groups]
 dev = [

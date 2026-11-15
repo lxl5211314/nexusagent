@@ -79,7 +79,7 @@ def start_upload(
     db: Session = Depends(get_db),
     identity: Identity = Depends(require_permission("doc:write")),
 ) -> UploadOut:
-    _get_owned(db, kb_id, identity.tenant_id)
+    _get_owned(db, kb_id, identity)
     upload_id = uuid.uuid4().hex
     name = safe_name(body.filename)
     key = f"{kb_id}/incoming/{upload_id}/{name}"

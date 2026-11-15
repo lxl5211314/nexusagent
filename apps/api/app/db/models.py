@@ -42,11 +42,39 @@ class UploadPart(Base):
     etag: Mapped[str] = mapped_column(String(128), default="")
 
 
+class Department(Base):
+    """Org unit. ``path`` is a materialised path ("/a/b/") so a subtree is one
+    prefix match instead of a recursive query, and moving a node rewrites one
+    prefix for the whole branch."""
+
+    __tablename__ = "departments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(String(32), default="local", index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    parent_id: Mapped[str | None] = mapped_column(String(32), default=None, index=True)
+    path: Mapped[str] = mapped_column(String(512), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(32), default="local", index=True)
+    name: Mapped[str] = mapped_column(String(120), default="")
+    dept_id: Mapped[str | None] = mapped_column(String(32), default=None, index=True)
+    role: Mapped[str] = mapped_column(String(16), default="viewer")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     tenant_id: Mapped[str] = mapped_column(String(32), default="local", index=True)
+    # NULL means "visible to the whole tenant"; otherwise the owning department.
+    department_id: Mapped[str | None] = mapped_column(String(32), default=None, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

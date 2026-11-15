@@ -99,7 +99,16 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 - 资源查询统一走 `_get_owned()`，跨租户返回 404 而不是 403。
 - 网关的 `ProxyController` 对每个上游请求显式设置租户头。`WebClient` 不会自动透传 exchange 的 header，漏写就会静默变成默认租户，隔离看起来生效、实际没有。
 - 角色同理：网关从 `key-roles` 取角色、缺省 `admin`、未知值降 `viewer`，把 `X-User-Role` 和 `X-User-Id` 一起下发。引擎只检查权限码（`kb:read/kb:write/doc:write/mcp:call/settings:write/audit:read`），不比较角色名——这样加一个角色只改一张表，不用改路由。
-- 用户与部门目前只到「租户 + 用户 + 角色」这一层，没有组织树；审计里记 `actor`，够回答「谁做的」，不够回答「他属于哪个部门」。
+- 审计里记 `actor`，能回答「谁做的」。
+
+### 部门与数据权限
+
+- 组织树用物料化路径（`Department.path = 父.path + 自己的 id + "/"`），"华东的所有下级"就是一次前缀匹配，不递归查。
+- 部门**不放在请求头**里。头里只有租户、用户、角色，部门按 `(tenant, user)` 从库里查：改一个 header 就能扩大可见范围的设计不能要。
+- 知识库归属：`department_id` 为空 = 全租户共享；否则只有该部门及其祖先链上的用户可见。
+- 移动部门要重写整棵子树的前缀，因此拒绝「移进自己的后代」——前缀重写会把子树从根上摘掉，之后谁都查不到。移动与改名都写审计。
+- 用户不存在时视为「无部门」，只看共享知识库。新装可用，不需要先灌用户。
+- 权限码上多两个：`org:read`（三种角色都有）与 `org:write`（仅 admin）。
 
 ## 7. MCP 与 Skill
 
@@ -142,3 +151,10 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 两个开关落在 `app/core/runtime.py`：`mcp_tool_router` 控制要不要调，`mcp_cite_external` 控制结果要不要进来源。只有白名单里的键可改，写入 `data/runtime.json`，启动时 `apply_overrides()` 回灌到 settings 单例，避免为一个布尔值重启服务。
 
 引用抽屉：`check_answer` 里只带 `snippet`，而 snippet 是压缩后的句子集合——读者点开时想核对的是原文，不是压缩结果。所以前端点引用后单独打 `GET /api/kb/{kb}/chunks/{chunk_id}` 取整块内容。接口按 `kb_id` 校验租户属主，跨租户一律 404；外部工具来源（`chunk_id` 形如 `mcp.server.tool`）没有对应行，直接用 citation 自带的正文。
+
+## 11. 链路追踪
+
+- 不挂 agent 也能跑：`TraceBridge` 用反射读 `TraceContext.traceId()`，取不到就退回网关自己生成的 16 位 id。APM 是可选依赖，不能成为启动前提。
+- 三个 id 各司其职：`X-Trace-Id` 是应用层关联键（日志 MDC、响应头、引擎侧 `TraceMiddleware` 回显），`sw8` 是 SkyWalking 的跨进程段头，转发时原样带给上游。部分实例挂了 agent 时，链路不会断成两截。
+- 指标不依赖 agent：`gateway.request{route,signal}` 直方图与 `gateway.rejected{reason}` 计数由 Micrometer 出，`/actuator/prometheus` 直接抓；路由先归一化（`/api/v1/runs/{id}/stream`），否则 run id 会把时间序列基数撑爆。
+- SkyWalking 只是把「一个请求经过哪些服务」画出来，判定慢在哪仍然靠 `route` 维度的直方图与引擎的 `tool.result.latency_ms`。

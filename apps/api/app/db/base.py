@@ -63,6 +63,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_tenant_columns()
     _ensure_column("documents", "object_key", "VARCHAR(512) DEFAULT ''")
+    _ensure_column("knowledge_bases", "department_id", "VARCHAR(32) DEFAULT NULL")
 
 
 # Columns added later: existing databases need a forward migration.

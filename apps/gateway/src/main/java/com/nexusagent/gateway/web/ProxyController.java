@@ -82,7 +82,12 @@ public class ProxyController {
                 .header("X-User-Role", role(exchange))
                 .header("X-User-Id", user(exchange));
         String traceId = trace(exchange);
-        return traceId.isEmpty() ? withTenant : withTenant.header("X-Trace-Id", traceId);
+        WebClient.RequestHeadersSpec<?> withTrace =
+                traceId.isEmpty() ? withTenant : withTenant.header("X-Trace-Id", traceId);
+        // When a SkyWalking agent is not attached the gateway still forwards the
+        // upstream segment header, so the trace survives a partial deployment.
+        String sw8 = exchange.getRequest().getHeaders().getFirst("sw8");
+        return sw8 == null || sw8.isBlank() ? withTrace : withTrace.header("sw8", sw8);
     }
 
     /**

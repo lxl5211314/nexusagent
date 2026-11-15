@@ -14,6 +14,8 @@ from app.cache import (
     recent_turns,
     remember_run,
 )
+from app.core import org
+from app.core.rbac import Identity, get_identity
 from app.core.tenant import get_tenant
 from app.db.base import get_db, session_scope
 from app.db.models import KnowledgeBase
@@ -46,9 +48,12 @@ async def chat_stream(
     payload: ChatRequest,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant),
+    identity: Identity = Depends(get_identity),
 ):
     kb = db.get(KnowledgeBase, payload.kb_id)
     if kb is None or kb.tenant_id != tenant_id:
+        raise HTTPException(404, "knowledge base not found")
+    if not org.can_access_kb(db, org.resolve_scope(db, identity), kb):
         raise HTTPException(404, "knowledge base not found")
 
     with session_scope() as session:
@@ -181,9 +186,12 @@ async def search(
     payload: RetrievalRequest,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_tenant),
+    identity: Identity = Depends(get_identity),
 ):
     kb = db.get(KnowledgeBase, payload.kb_id)
     if kb is None or kb.tenant_id != tenant_id:
+        raise HTTPException(404, "knowledge base not found")
+    if not org.can_access_kb(db, org.resolve_scope(db, identity), kb):
         raise HTTPException(404, "knowledge base not found")
     result = retrieve(payload.kb_id, payload.query, top_k=payload.top_k, with_trace=True)
     return {

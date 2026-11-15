@@ -1,0 +1,33 @@
+# Trace backend for a local demo: OAP accepts the agent's gRPC on 11800,
+# the UI reads it back on 8081 (8080 is the gateway).
+#
+#   docker compose -f docker-compose.observability.yml up -d
+#   java -javaagent:skywalking-agent.jar -Dskywalking.agent.service_name=nexus-gateway -jar apps/gateway/target/gateway-0.4.0.jar
+#   sw-python run -p uvicorn app.main:app --port 8017
+name: nexusagent-observability
+
+services:
+  oap:
+    image: apache/skywalking-oap-server:9.7.0
+    environment:
+      SW_STORAGE: h2
+      SW_HEALTH_CHECKER: default
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    ports:
+      - "11800:11800"   # agent gRPC
+      - "12800:12800"   # query API
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/12800"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ui:
+    image: apache/skywalking-ui:9.7.0
+    environment:
+      SW_OAP_ADDRESS: http://oap:12800
+    ports:
+      - "8081:8080"
+    depends_on:
+      oap:
+        condition: service_healthy

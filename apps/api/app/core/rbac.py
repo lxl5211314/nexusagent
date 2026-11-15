@@ -16,10 +16,19 @@ from app.core.tenant import normalize_tenant
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": frozenset(
-        {"kb:read", "kb:write", "doc:write", "mcp:call", "settings:write", "audit:read"}
+        {
+            "kb:read",
+            "kb:write",
+            "doc:write",
+            "mcp:call",
+            "settings:write",
+            "audit:read",
+            "org:read",
+            "org:write",
+        }
     ),
-    "editor": frozenset({"kb:read", "kb:write", "doc:write", "mcp:call"}),
-    "viewer": frozenset({"kb:read"}),
+    "editor": frozenset({"kb:read", "kb:write", "doc:write", "mcp:call", "org:read"}),
+    "viewer": frozenset({"kb:read", "org:read"}),
 }
 
 ROLES = tuple(ROLE_PERMISSIONS)

@@ -71,7 +71,7 @@ recall@5 = 1.00    mrr@5 = 0.92    faithfulness = 0.81    zero_hit = 0
 - 三路召回命中 2 条，分数里能看到 `dense / sparse / graph / rrf / rerank` 各自的值
 - 删库后两个外部库都归零（`scripts/live_cleanup.py` 断言）
 
-测试：后端 110 个用例（含 fakeredis 驱动的跨实例事件总线、运行状态缓存、分片上传和可选的真实存储联调），网关 11 个用例，全部离线可跑。
+测试：后端 119 个用例（含 fakeredis 驱动的跨实例事件总线、运行状态缓存、分片上传、部门数据权限和可选的真实存储联调），网关 12 个用例，全部离线可跑。
 
 ## 知识图谱里存的是什么
 
@@ -97,11 +97,34 @@ recall@5 = 1.00    mrr@5 = 0.92    faithfulness = 0.81    zero_hit = 0
 
 | 角色 | 能做什么 |
 | --- | --- |
-| `admin` | 读写知识库与文档、调 MCP 工具、改运行时设置、看审计 |
-| `editor` | 读写知识库与文档、调 MCP 工具 |
+| `admin` | 读写知识库与文档、调 MCP 工具、改运行时设置、看审计、维护部门与用户 |
+| `editor` | 读写知识库与文档、调 MCP 工具、看组织树 |
 | `viewer` | 只读知识库与文档 |
 
 没有 `X-User-Role` 的请求按 `viewer` 处理（故障关闭）；未知角色同样降到 `viewer`。跨租户访问一律 404 而不是 403，避免通过状态码探测别的租户有没有这个知识库。审计行记录 `actor`，能回答「谁在什么时候传了哪份文件」。
+
+### 部门与数据权限
+
+![部门与知识库](docs/images/org.png)
+
+组织树按物料化路径存（`/集团/研发/平台组/`），一个知识库属于某个部门，`department_id` 为空表示全租户可见。可见范围是**自己部门及其子树**：
+
+```
+GET    /api/departments            平铺（按 path 排序）
+GET    /api/org/tree               一次查询在内存拼树
+POST   /api/departments            父节点同租户，深度上限 12
+PATCH  /api/departments/{id}       改名字，或带 parent_id 移动整棵子树
+DELETE /api/departments/{id}       还有子部门 / 用户 / 知识库时返回 409
+
+POST   /api/users                  身份入库，部门与角色以库为准
+```
+
+两个边界是有意这么定的：
+
+* **移动拒绝进入自己的子树**。路径是前缀，移进自己的后代会让前缀重写把整棵树从根上摘掉，之后谁都查不到；
+* **部门不在请求头里**。头里只有租户、用户、角色，部门从库里查。否则改一个 header 就能看到别的部门的知识库。
+
+没有建档的用户视为「无部门」，只看全租户共享的知识库——新装就能用，也不用先灌用户。
 
 ## 快速开始
 
@@ -201,6 +224,25 @@ mvn spring-boot:run          # :8080，转发到 127.0.0.1:8017
 - **限流**。按租户的令牌桶，不是按 key——换 key 不重置额度。默认每实例一个桶；`NEXUS_GATEWAY_REDIS_URL` 指向 Redis 时改用 Lua 脚本统一扣减，多实例共享同一份额度，Redis 不可用会降级回本地桶而不是拒绝服务。
 - **熔断**。上游连续失败到阈值（默认 20 次窗口里 50%）后开路 20 秒，期间直接 503，避免引擎被打穿后每个请求都等满超时。半开只放两个请求试探。
 - **可观测**。每个请求一个 trace id（沿用 `X-Trace-Id` 或现生成），写进 MDC、回写响应头，并随转发头传给引擎；`/actuator/prometheus` 暴露 `gateway.request` 时延直方图与拒绝计数，按路由归一化，不让 id 把基数撑爆。
+
+### 接 SkyWalking
+
+不挂 agent 时网关照常工作：`TraceBridge` 反射读 `TraceContext.traceId()`，读不到就用自己生成的 16 位 id，所以本地开发和单测都不需要 APM。要真正的跨进程链路：
+
+```bash
+docker compose -f docker-compose.observability.yml up -d      # OAP :11800/:12800，UI :8081
+
+java -javaagent:skywalking-agent.jar \
+     -Dskywalking.agent.service_name=nexus-gateway \
+     -Dskywalking.collector.backend_service=127.0.0.1:11800 \
+     -jar apps/gateway/target/gateway-0.4.0.jar
+
+# 引擎侧用官方 Python agent
+pip install -e "apps/api[apm]"
+sw-python run -p uvicorn app.main:app --port 8017
+```
+
+网关把上游 `sw8` 头原样转发，因此部分实例挂了 agent、部分没挂时，链路不会断成两截；`/api/v1/whoami` 会回显 `trace_id`，排查时先看它和 UI 里的 id 是否一致。
 
 ## 分片上传与断点续传
 

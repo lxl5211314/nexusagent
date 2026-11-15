@@ -34,6 +34,41 @@ const backends = ref(null)
 const history = ref([])
 const drawer = ref(null)
 const folded = ref({})
+const orgTree = ref([])
+const orgDraft = ref({ name: '', parent_id: '' })
+const kbDept = ref('')
+
+const flatOrg = computed(() => {
+  const rows = []
+  const walk = (nodes, depth) => {
+    for (const node of nodes) {
+      rows.push({ ...node, depth })
+      walk(node.children || [], depth + 1)
+    }
+  }
+  walk(orgTree.value, 0)
+  return rows
+})
+
+async function refreshOrg() {
+  const r = await api('/api/org/tree')
+  orgTree.value = r.ok ? await r.json() : []
+}
+
+async function addDept() {
+  const name = orgDraft.value.name.trim()
+  if (!name) return
+  const r = await api('/api/departments', {
+    method: 'POST',
+    body: JSON.stringify({ name, parent_id: orgDraft.value.parent_id || null }),
+  })
+  if (!r.ok) {
+    error.value = (await r.json()).detail || `HTTP ${r.status}`
+    return
+  }
+  orgDraft.value = { name: '', parent_id: '' }
+  await refreshOrg()
+}
 
 function toggleFold(key) {
   folded.value = { ...folded.value, [key]: !folded.value[key] }
@@ -161,7 +196,10 @@ async function refreshDocs() {
 async function createKb() {
   const name = prompt('知识库名称：', '新知识库')
   if (!name) return
-  await api('/api/kb', { method: 'POST', body: JSON.stringify({ name }) })
+  await api('/api/kb', {
+    method: 'POST',
+    body: JSON.stringify({ name, department_id: kbDept.value || null }),
+  })
   await refreshKbs()
 }
 
@@ -430,7 +468,7 @@ async function runEval() {
   }
 }
 
-onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory() })
+onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory(); refreshOrg() })
 </script>
 
 <template>
@@ -465,6 +503,12 @@ onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory() })
 
       <div class="side-section">
         <h3>知识库 <span class="count">{{ kbs.length }}</span></h3>
+        <select v-model="kbDept" class="tenant-input" title="新建的知识库归属哪个部门；留空表示全租户可见">
+          <option value="">全租户可见</option>
+          <option v-for="row in flatOrg" :key="row.id" :value="row.id">
+            {{ '　'.repeat(row.depth) }}{{ row.name }}
+          </option>
+        </select>
         <button class="btn primary block" @click="createKb">+ 新建知识库</button>
         <div
           v-for="kb in kbs"
@@ -586,6 +630,30 @@ onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory() })
 
     <div class="panel">
       <h3>运行面板</h3>
+
+      <div class="trace-block">
+        <div class="head">
+          <button class="fold" @click="toggleFold('org')">{{ folded.org ? '▸' : '▾' }} 组织架构 · {{ flatOrg.length }} 个部门</button>
+          <button class="btn sm" @click="refreshOrg">刷新</button>
+        </div>
+        <div v-show="!folded.org">
+          <div v-for="row in flatOrg" :key="row.id" class="org-row">
+            <span class="org-name" :style="{ paddingLeft: `${row.depth * 12}px` }">{{ row.name }}</span>
+            <span class="org-role">{{ row.path.split('/').length - 2 }} 级</span>
+          </div>
+          <div v-if="!flatOrg.length" class="row">还没有部门；知识库默认全租户可见</div>
+          <div class="org-form">
+            <input v-model="orgDraft.name" placeholder="部门名称" />
+            <select v-model="orgDraft.parent_id">
+              <option value="">作为根部门</option>
+              <option v-for="row in flatOrg" :key="row.id" :value="row.id">
+                {{ '　'.repeat(row.depth) }}{{ row.name }} 下
+              </option>
+            </select>
+            <button class="btn sm" @click="addDept">新增</button>
+          </div>
+        </div>
+      </div>
 
       <div class="trace-block">
         <div class="head">

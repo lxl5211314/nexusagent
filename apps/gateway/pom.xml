@@ -44,6 +44,13 @@
       <groupId>io.micrometer</groupId>
       <artifactId>micrometer-registry-prometheus</artifactId>
     </dependency>
+    <!-- Optional at runtime: TraceBridge reads it reflectively, so the gateway
+         starts with or without -javaagent. -->
+    <dependency>
+      <groupId>org.apache.skywalking</groupId>
+      <artifactId>apm-toolkit-trace</artifactId>
+      <version>9.4.0</version>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-configuration-processor</artifactId>
