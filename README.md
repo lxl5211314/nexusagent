@@ -232,15 +232,27 @@ mvn spring-boot:run          # :8080，转发到 127.0.0.1:8017
 ```bash
 docker compose -f docker-compose.observability.yml up -d      # OAP :11800/:12800，UI :8081
 
+# 引擎侧：agent 必须装进应用自己的解释器，-p 指过去，否则 CLI 会用 PATH 里另一个 Python
+uv pip install "apache-skywalking==1.1.0"
+SW_AGENT_NAME=nexus-api SW_AGENT_COLLECTOR_BACKEND_SERVICES=127.0.0.1:11800 \
+  sw-python run -p .venv/Scripts/python.exe -m uvicorn app.main:app --port 8017
+
+# 网关侧
 java -javaagent:skywalking-agent.jar \
      -Dskywalking.agent.service_name=nexus-gateway \
      -Dskywalking.collector.backend_service=127.0.0.1:11800 \
      -jar apps/gateway/target/gateway-0.4.0.jar
-
-# 引擎侧用官方 Python agent
-pip install -e "apps/api[apm]"
-sw-python run -p uvicorn app.main:app --port 8017
 ```
+
+`apache-skywalking` 的版本要挑：1.2 之后的新 wheel 在 Python 3.12+ 上会因为 `importlib` 的变更装不起来（`skywalking.protocol` 缺失、`FileFinder.find_module` 已移除），1.1.0 + Python 3.11 是目前能跑通的组合。OAP 容器内是 UTC，看 UI 时先确认右上角的时区。
+
+实测（一个真实请求打进去，服务页 `nexus-api`）：
+
+![SkyWalking 服务页](docs/images/skywalking.png)
+
+点进 Trace 标签能看到每条 segment 的跨度——这条 `/api/kb` 12 ms，组件标的是 `Http-FastAPI`：
+
+![SkyWalking 追踪](docs/images/skywalking-traces.png)
 
 网关把上游 `sw8` 头原样转发，因此部分实例挂了 agent、部分没挂时，链路不会断成两截；`/api/v1/whoami` 会回显 `trace_id`，排查时先看它和 UI 里的 id 是否一致。
 
