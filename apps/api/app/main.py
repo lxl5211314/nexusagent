@@ -17,8 +17,10 @@ from app.api.routes import (
     knowledge,
     settings_routes,
     system,
+    uploads,
 )
 from app.core import runtime
+from app.core.trace import TraceMiddleware, install_log_filter
 from app.db.base import init_db
 
 STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
@@ -26,6 +28,8 @@ STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 def create_app() -> FastAPI:
     app = FastAPI(title="NexusAgent", version="0.4.0")
+    install_log_filter()
+    app.add_middleware(TraceMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -44,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_routes.router, prefix="/api")
     app.include_router(extensions.router, prefix="/api")
     app.include_router(settings_routes.router, prefix="/api")
+    app.include_router(uploads.router, prefix="/api")
 
     if STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="web")

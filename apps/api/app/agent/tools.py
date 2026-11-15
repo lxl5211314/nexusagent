@@ -69,6 +69,16 @@ class ToolRegistry:
         except KeyError as exc:
             raise PermissionDenied(f"unknown tool: {name}") from exc
 
+    def scope(self, names: set[str]) -> ToolRegistry:
+        """A view that only exposes the tools selected for one subtask.
+
+        The catalog can hold hundreds of external tools; a sub-agent should see
+        the handful that were chosen for it, and nothing else.
+        """
+        view = ToolRegistry()
+        view._specs = {name: spec for name, spec in self._specs.items() if name in names}
+        return view
+
     def list(self) -> list[dict[str, Any]]:
         return [
             {
@@ -143,7 +153,7 @@ def _kg_expand(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
     if not term:
         raise ValueError("term is required")
     index = get_index(ctx.kb_id)
-    neighbours = index.graph.neighbours(term, limit=6) if index.graph else []
+    neighbours = [chunk_id for chunk_id, _score in index.graph.recall(term, 6)] if index.graph else []
     hits = []
     for chunk_id in neighbours:
         view = index.by_id(chunk_id)

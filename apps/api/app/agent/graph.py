@@ -16,6 +16,7 @@ reducers — the "拆解 → 并行 → 汇总" flow on the resume.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -28,6 +29,8 @@ from app.agent.tools import ToolContext, registry
 from app.core.config import get_settings
 from app.guard.citation import check_answer
 from app.rag.retriever import RetrievedChunk, retrieve
+
+log = logging.getLogger(__name__)
 
 
 def _emit(config: RunnableConfig, type_: str, payload: dict[str, Any]) -> None:
@@ -100,7 +103,50 @@ async def worker(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     )
 
     ctx = ToolContext(kb_id=kb_id, run_id=run_id, emit=lambda t, p: _emit(config, t, p))
-    result = registry.invoke("kb.search", {"query": task.question, "top_k": 3}, ctx)
+    scoped = registry
+    if settings.mcp_config:
+        from app.mcp.catalog import get_catalog
+        from app.mcp.router import choose_tools
+
+        catalog = get_catalog()
+        try:
+            palette = choose_tools(task.question, catalog.tools(), limit=settings.max_tools_per_task)
+        except Exception as exc:  # noqa: BLE001 - discovery is best effort
+            log.warning("mcp discovery failed for subtask %s: %s", task.id, exc)
+            palette = []
+        names = {"kb.search", "kg.expand", "calc.eval"} | {
+            f"mcp.{choice.server}.{choice.name}" for choice in palette
+        }
+        scoped = registry.scope(names)
+        if palette:
+            _emit(
+                config,
+                "step.started",
+                {
+                    "node": "worker",
+                    "task_id": task.id,
+                    "note": f"按需加载 {len(palette)} 个外部工具",
+                    "tools": [choice.spec_name for choice in palette],
+                },
+            )
+
+    if settings.skills_dir:
+        from app.agent.skills import load_catalog, select_skills
+
+        picks = select_skills(task.question, load_catalog(settings.skills_dir), limit=settings.max_skills_per_task)
+        if picks:
+            _emit(
+                config,
+                "step.started",
+                {
+                    "node": "worker",
+                    "task_id": task.id,
+                    "note": f"按需加载技能 {', '.join(card.name for card in picks)}",
+                    "skills": [card.name for card in picks],
+                },
+            )
+
+    result = scoped.invoke("kb.search", {"query": task.question, "top_k": 3}, ctx)
 
     retrieval = retrieve(kb_id, task.question, top_k=3, keep=12)
     contexts = retrieval.items
@@ -117,7 +163,7 @@ async def worker(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         from app.mcp.catalog import get_catalog
         from app.mcp.router import enrich_with_mcp
 
-        extra = enrich_with_mcp(task.question, ctx, registry, get_catalog())
+        extra = enrich_with_mcp(task.question, ctx, scoped, get_catalog())
         if extra is not None:
             choice, call = extra
             if call.ok:

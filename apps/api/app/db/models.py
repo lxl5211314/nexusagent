@@ -17,6 +17,31 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+class Upload(Base):
+    """An unfinished chunked upload. Parts live in the object store, not here."""
+
+    __tablename__ = "uploads"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(32), default="local", index=True)
+    kb_id: Mapped[str] = mapped_column(String(32), index=True)
+    object_key: Mapped[str] = mapped_column(String(512))
+    filename: Mapped[str] = mapped_column(String(255))
+    mime: Mapped[str] = mapped_column(String(120), default="application/octet-stream")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class UploadPart(Base):
+    __tablename__ = "upload_parts"
+
+    upload_id: Mapped[str] = mapped_column(
+        ForeignKey("uploads.id", ondelete="CASCADE"), primary_key=True
+    )
+    part_number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    etag: Mapped[str] = mapped_column(String(128), default="")
+
+
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 

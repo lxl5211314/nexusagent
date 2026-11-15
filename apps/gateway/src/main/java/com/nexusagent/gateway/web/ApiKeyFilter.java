@@ -3,6 +3,7 @@ package com.nexusagent.gateway.web;
 import com.nexusagent.gateway.config.GatewayProperties;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.core.io.buffer.DataBuffer;
@@ -16,15 +17,19 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 /**
- * Resolves {@code X-API-Key} to a tenant and rejects unknown keys. Health and
- * actuator routes stay open so probes and the smoke test work without a key.
+ * Resolves {@code X-API-Key} to a tenant and a role, then stamps both onto the
+ * request. Health and actuator routes stay open so probes work without a key.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class ApiKeyFilter implements WebFilter {
 
     public static final String TENANT_ATTRIBUTE = "nexus.tenant";
+    public static final String ROLE_ATTRIBUTE = "nexus.role";
+    public static final String USER_ATTRIBUTE = "nexus.user";
+
     private static final String HEADER = "X-API-Key";
+    private static final Set<String> ROLES = Set.of("admin", "editor", "viewer");
 
     private final GatewayProperties properties;
 
@@ -41,14 +46,11 @@ public class ApiKeyFilter implements WebFilter {
 
         Map<String, String> keys = properties.getApiKeys();
         if (keys.isEmpty()) {
-            // Auth disabled: local development mode. Still honour an explicit
-            // tenant header so isolation can be exercised without API keys.
+            // Auth disabled: local development mode. Still honour explicit
+            // tenant/role headers so isolation can be exercised without keys.
             String tenant = normalizeTenant(exchange.getRequest().getHeaders().getFirst("X-Tenant-Id"));
-            exchange.getAttributes().put(TENANT_ATTRIBUTE, tenant);
-            ServerWebExchange mutated = exchange.mutate()
-                    .request(builder -> builder.header("X-Tenant-Id", tenant))
-                    .build();
-            return chain.filter(mutated);
+            String role = normalizeRole(exchange.getRequest().getHeaders().getFirst("X-User-Role"));
+            return chain.filter(stamp(exchange, tenant, role, "local"));
         }
 
         String key = exchange.getRequest().getHeaders().getFirst(HEADER);
@@ -57,12 +59,30 @@ public class ApiKeyFilter implements WebFilter {
             return reject(exchange, HttpStatus.UNAUTHORIZED, "invalid or missing X-API-Key");
         }
 
+        String role = normalizeRole(properties.getKeyRoles().get(key));
+        return chain.filter(stamp(exchange, tenant, role, "key:" + Integer.toHexString(key.hashCode())));
+    }
+
+    /** Resolved identity travels as attributes and as headers for the engine. */
+    private ServerWebExchange stamp(ServerWebExchange exchange, String tenant, String role, String user) {
         exchange.getAttributes().put(TENANT_ATTRIBUTE, tenant);
-        // Downstream sees the resolved tenant, never the raw key.
-        ServerWebExchange mutated = exchange.mutate()
-                .request(builder -> builder.header("X-Tenant-Id", tenant))
+        exchange.getAttributes().put(ROLE_ATTRIBUTE, role);
+        exchange.getAttributes().put(USER_ATTRIBUTE, user);
+        return exchange.mutate()
+                .request(builder -> builder
+                        .header("X-Tenant-Id", tenant)
+                        .header("X-User-Role", role)
+                        .header("X-User-Id", user))
                 .build();
-        return chain.filter(mutated);
+    }
+
+    /** Unknown roles fail closed: an authenticated key is not automatically admin. */
+    static String normalizeRole(String raw) {
+        if (raw == null) {
+            return "admin";
+        }
+        String cleaned = raw.trim().toLowerCase();
+        return ROLES.contains(cleaned) ? cleaned : "viewer";
     }
 
     /** Keeps tenant ids alphanumeric so they can be safely embedded downstream. */
@@ -80,7 +100,8 @@ public class ApiKeyFilter implements WebFilter {
         return cleaned;
     }
 
-    static boolean isOpen(String path) {        return path.startsWith("/actuator") || path.equals("/health") || path.equals("/api/v1/health");
+    static boolean isOpen(String path) {
+        return path.startsWith("/actuator") || path.equals("/health") || path.equals("/api/v1/health");
     }
 
     static Mono<Void> reject(ServerWebExchange exchange, HttpStatus status, String message) {

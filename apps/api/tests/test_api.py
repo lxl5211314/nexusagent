@@ -129,3 +129,11 @@ def test_chunk_detail_for_citation_drawer(client, session):
 
     hidden = client.get(f"/api/kb/{kb_id}/chunks/{chunk.id}", headers={"X-Tenant-Id": "other"})
     assert hidden.status_code == 404
+
+
+def test_trace_header_is_echoed(client):
+    given = client.get("/api/whoami", headers={"X-Trace-Id": "abc123"})
+    assert given.headers["X-Trace-Id"] == "abc123"
+
+    minted = client.get("/api/whoami")
+    assert len(minted.headers["X-Trace-Id"]) == 16

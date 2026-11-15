@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.agent.skills import find_skill, load_skills
 from app.agent.tools import PermissionDenied, ToolContext, registry
 from app.core.config import get_settings
-from app.core.tenant import get_tenant
+from app.core.rbac import Identity, require_permission
 from app.db.base import get_db
 from app.mcp.catalog import get_catalog, register_catalog_tools
 from app.services import audit
@@ -68,15 +68,16 @@ def refresh() -> dict[str, Any]:
 def call(
     body: MCPCall,
     db: Session = Depends(get_db),
-    tenant: str = Depends(get_tenant),
+    identity: Identity = Depends(require_permission("mcp:call")),
 ) -> dict[str, Any]:
+    tenant = identity.tenant_id
     catalog = get_catalog()
     info = next(
         (tool for tool in catalog.tools() if tool.server == body.server and tool.name == body.tool),
         None,
     )
     if info is None:
-        _audit(db, tenant, body, "missing", "unknown tool")
+        _audit(db, tenant, body, "missing", "unknown tool", identity.user_id)
         raise HTTPException(status_code=404, detail="unknown MCP tool")
     permission = f"mcp:{body.server}" if info.read_only else f"mcp:{body.server}:write"
     context = ToolContext(
@@ -90,16 +91,18 @@ def call(
             raise PermissionDenied("write tools need an approval token")
         result = catalog.call(body.server, body.tool, body.arguments)
     except PermissionDenied as exc:
-        _audit(db, tenant, body, "denied", str(exc))
+        _audit(db, tenant, body, "denied", str(exc), identity.user_id)
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:
-        _audit(db, tenant, body, "error", str(exc)[:200])
+        _audit(db, tenant, body, "error", str(exc)[:200], identity.user_id)
         raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
-    _audit(db, tenant, body, "ok" if not result["is_error"] else "tool_error", result["text"][:200])
+    _audit(db, tenant, body, "ok" if not result["is_error"] else "tool_error", result["text"][:200], identity.user_id)
     return {"ok": not result["is_error"], "text": result["text"], "content": result["content"]}
 
 
-def _audit(db: Session, tenant: str, body: MCPCall, outcome: str, detail: str) -> None:
+def _audit(
+    db: Session, tenant: str, body: MCPCall, outcome: str, detail: str, actor: str = "api"
+) -> None:
     try:
         audit.record(
             db,
@@ -107,7 +110,7 @@ def _audit(db: Session, tenant: str, body: MCPCall, outcome: str, detail: str) -
             action="mcp.call",
             resource_type="mcp_tool",
             resource_id=f"{body.server}.{body.tool}",
-            actor="api",
+            actor=actor,
             detail={
                 "outcome": outcome,
                 "arguments": sorted(body.arguments),

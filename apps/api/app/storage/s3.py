@@ -65,3 +65,64 @@ class S3ObjectStore:
             return True
         except (BotoCoreError, ClientError):
             return False
+
+    # --- chunked upload -------------------------------------------------
+    # Multipart state lives in S3/MinIO, so a client that reconnects asks which
+    # parts landed and continues instead of re-sending the whole file.
+
+    def create_multipart(self, key: str, content_type: str = "") -> str:
+        extra = {"ContentType": content_type} if content_type else {}
+        response = self._client.create_multipart_upload(
+            Bucket=self._bucket, Key=key, **extra
+        )
+        return response["UploadId"]
+
+    def upload_part(self, key: str, upload_id: str, part_number: int, data: bytes) -> str:
+        response = self._client.upload_part(
+            Bucket=self._bucket,
+            Key=key,
+            UploadId=upload_id,
+            PartNumber=part_number,
+            Body=data,
+        )
+        return response["ETag"].strip('"')
+
+    def list_parts(self, key: str, upload_id: str) -> list[int]:
+        parts: list[int] = []
+        marker = 0
+        while True:
+            response = self._client.list_parts(
+                Bucket=self._bucket, Key=key, UploadId=upload_id, PartNumberMarker=marker
+            )
+            parts.extend(part["PartNumber"] for part in response.get("Parts", []))
+            if not response.get("IsTruncated"):
+                return sorted(parts)
+            marker = response["NextPartNumberMarker"]
+
+    def complete_multipart(self, key: str, upload_id: str, part_numbers: list[int]) -> str:
+        listed = {
+            part["PartNumber"]: part["ETag"]
+            for part in self._client.list_parts(
+                Bucket=self._bucket, Key=key, UploadId=upload_id
+            ).get("Parts", [])
+        }
+        missing = [number for number in part_numbers if number not in listed]
+        if missing:
+            raise ValueError(f"parts not uploaded: {missing}")
+        self._client.complete_multipart_upload(
+            Bucket=self._bucket,
+            Key=key,
+            UploadId=upload_id,
+            MultipartUpload={
+                "Parts": [
+                    {"PartNumber": number, "ETag": listed[number]}
+                    for number in sorted(part_numbers)
+                ]
+            },
+        )
+        return key
+
+    def abort_multipart(self, key: str, upload_id: str) -> None:
+        self._client.abort_multipart_upload(
+            Bucket=self._bucket, Key=key, UploadId=upload_id
+        )

@@ -59,3 +59,47 @@ def find_skill(root: str, name: str) -> SkillCard | None:
         if card.name == name:
             return card
     return None
+
+
+@dataclass(frozen=True)
+class SkillSummary:
+    """Name + description only: what the agent sees before it picks a skill."""
+
+    name: str
+    description: str
+    path: str
+
+
+def load_catalog(root: str) -> list[SkillSummary]:
+    return [
+        SkillSummary(name=card.name, description=card.description, path=card.path)
+        for card in load_skills(root)
+    ]
+
+
+def select_skills(
+    question: str, cards: list[SkillSummary], limit: int = 2, threshold: float = 0.12
+) -> list[SkillSummary]:
+    """Rank skill cards by how many of the question's terms they mention."""
+    from app.rag.text import tokenize
+
+    terms = set(tokenize(question))
+    if not terms:
+        return []
+    scored: list[tuple[float, SkillSummary]] = []
+    for card in cards:
+        words = set(tokenize(card.name.replace("-", " "))) | set(tokenize(card.description))
+        if not words:
+            continue
+        score = len(terms & words) / len(terms)
+        if score >= threshold:
+            scored.append((score, card))
+    scored.sort(key=lambda item: (-item[0], item[1].name))
+    return [card for _score, card in scored[:limit]]
+
+
+def load_body(card: SkillSummary) -> str:
+    """Read the instructions only when a skill was actually selected."""
+    text = Path(card.path).read_text(encoding="utf-8", errors="replace")
+    _name, _description, body = parse_skill(text)
+    return body

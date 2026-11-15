@@ -53,5 +53,9 @@ def client():
 
     from app.main import app
 
-    with TestClient(app) as test_client:
+    # The gateway stamps these headers after authenticating a key; tests act as
+    # an admin in the local tenant unless a case overrides them.
+    with TestClient(
+        app, headers={"X-User-Id": "tester", "X-User-Role": "admin"}
+    ) as test_client:
         yield test_client

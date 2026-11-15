@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core import runtime
 from app.core.config import get_settings
-from app.core.tenant import get_tenant
+from app.core.rbac import Identity, require_permission
 from app.db.base import get_db
 from app.services import audit
 
@@ -40,7 +40,7 @@ def read_settings() -> dict[str, Any]:
 def write_settings(
     body: SettingsIn,
     db: Session = Depends(get_db),
-    tenant: str = Depends(get_tenant),
+    identity: Identity = Depends(require_permission("settings:write")),
 ) -> dict[str, Any]:
     changes = body.model_dump(exclude_none=True)
     try:
@@ -49,11 +49,11 @@ def write_settings(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     audit.record(
         db,
-        tenant_id=tenant,
+        tenant_id=identity.tenant_id,
         action="settings.update",
         resource_type="settings",
         resource_id=",".join(sorted(changes)),
-        actor="api",
+        actor=identity.user_id,
         detail=items,
     )
     db.commit()

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from app.db.base import SessionLocal
 from app.db.models import Chunk, Document
 from app.rag.bm25 import BM25
-from app.rag.graph_store import GraphStats, TermGraph
+from app.rag.kg import EntityGraph, GraphStats, get_extractor
 from app.rag.text import cosine, tokenize
 
 
@@ -34,7 +34,7 @@ class CorpusIndex:
     kb_id: str
     chunks: list[ChunkView] = field(default_factory=list)
     bm25: BM25 | None = None
-    graph: TermGraph | None = None
+    graph: EntityGraph | None = None
 
     # -- channels -----------------------------------------------------------
     def dense(self, vector: list[float], limit: int) -> list[tuple[str, float]]:
@@ -59,7 +59,10 @@ class CorpusIndex:
         return next((c for c in self.chunks if c.id == chunk_id), None)
 
     def stats(self) -> GraphStats:
-        return self.graph.stats() if self.graph else GraphStats(0, 0, len(self.chunks))
+        if self.graph is None:
+            return GraphStats(0, 0, len(self.chunks))
+        stats = self.graph.stats()
+        return GraphStats(nodes=stats["nodes"], edges=stats["edges"], chunks=stats["chunks"])
 
 
 _cache: dict[str, CorpusIndex] = {}
@@ -101,7 +104,9 @@ def _load(kb_id: str) -> CorpusIndex:
             )
     if index.chunks:
         index.bm25 = BM25.build([chunk.content for chunk in index.chunks])
-        index.graph = TermGraph.build([(chunk.id, chunk.content) for chunk in index.chunks])
+        index.graph = EntityGraph.build(
+            [(chunk.id, chunk.content) for chunk in index.chunks], get_extractor()
+        )
     return index
 
 

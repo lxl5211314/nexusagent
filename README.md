@@ -67,11 +67,41 @@ recall@5 = 1.00    mrr@5 = 0.92    faithfulness = 0.81    zero_hit = 0
 真实后端（不是内存桩）也跑过一遍：
 
 - Milvus Lite（同一个 gRPC 协议）+ Neo4j 进程内 Bolt
-- 入库 2 块 → 向量库 2 行、图谱 2 块 / 25 节点 / 80 条共现边
+- 入库 2 块 → 向量库 2 行、图谱 2 块 / 5 个实体 / 1 条关系
 - 三路召回命中 2 条，分数里能看到 `dense / sparse / graph / rrf / rerank` 各自的值
 - 删库后两个外部库都归零（`scripts/live_cleanup.py` 断言）
 
-测试：后端 87 个用例（含 fakeredis 驱动的跨实例事件总线、运行状态缓存和可选的真实存储联调），网关 7 个用例，全部离线可跑。
+测试：后端 110 个用例（含 fakeredis 驱动的跨实例事件总线、运行状态缓存、分片上传和可选的真实存储联调），网关 11 个用例，全部离线可跑。
+
+## 知识图谱里存的是什么
+
+从文档块抽的是**实体和带类型的关系**，不是词频共现：
+
+```
+(:Chunk)-[:MENTIONS]->(:Entity {name, type})
+(:Entity)-[:REL {type}]->(:Entity)
+```
+
+关系来自两类抽取器，同一套接口（`app/rag/kg.py`）：
+
+- **规则**：按连接词切句（`是一种 / 依赖于 / 基于 / 包括 / 负责 / 调用 / 写入 / 存储 / 部署`…），左边取末段当 head、右边取首段当 tail，两侧都做长度、停用词和字符集过滤。优点是零成本、可解释；缺点是句子必须显式说出关系。
+- **模型**：`NEXUS_GRAPH_EXTRACTOR=llm` 时走 OpenAI 兼容接口，要求只返回 `{"triples":[…]}`，解析失败或返回空就回落规则——图不能因为一次模型抖动变成空的。
+
+另外补了一条 `detect_entities`：中文按「后缀词」识别（`…数据库 / …服务 / …平台 / …系统`），英文按首字母大写识别。没有它，「RRF 融合三路结果」这种没有连接词的句子一个实体都抽不出来，图谱就等于白建。
+
+检索时实体命中直接加 1.0，一跳邻居加 0.5，和向量、BM25 两路一起送进 RRF。样例库上有 44 个实体、7 条关系；问「RRF 是怎么融合三路结果的」能命中 2 个块，纯词共现版本这里是 0。
+
+## 角色与权限
+
+网关解析出身份后，引擎按权限码校验，不比较角色名：
+
+| 角色 | 能做什么 |
+| --- | --- |
+| `admin` | 读写知识库与文档、调 MCP 工具、改运行时设置、看审计 |
+| `editor` | 读写知识库与文档、调 MCP 工具 |
+| `viewer` | 只读知识库与文档 |
+
+没有 `X-User-Role` 的请求按 `viewer` 处理（故障关闭）；未知角色同样降到 `viewer`。跨租户访问一律 404 而不是 403，避免通过状态码探测别的租户有没有这个知识库。审计行记录 `actor`，能回答「谁在什么时候传了哪份文件」。
 
 ## 快速开始
 
@@ -165,7 +195,34 @@ cd apps/gateway
 mvn spring-boot:run          # :8080，转发到 127.0.0.1:8017
 ```
 
-API Key 存在时按 key 映射租户，不存在时是开发模式（沿用调用方的 `X-Tenant-Id`）。限流按租户做 60 秒固定窗口。
+网关做四件事，都是引擎侧不该重复的：
+
+- **认证与身份**。`X-API-Key` 映射到租户；`key-roles` 再映射到 `admin/editor/viewer`，两个头一起下发给引擎，引擎只认权限码，不自己解析 key。没配 key 是开发模式，直接沿用调用方的租户与角色。
+- **限流**。按租户的令牌桶，不是按 key——换 key 不重置额度。默认每实例一个桶；`NEXUS_GATEWAY_REDIS_URL` 指向 Redis 时改用 Lua 脚本统一扣减，多实例共享同一份额度，Redis 不可用会降级回本地桶而不是拒绝服务。
+- **熔断**。上游连续失败到阈值（默认 20 次窗口里 50%）后开路 20 秒，期间直接 503，避免引擎被打穿后每个请求都等满超时。半开只放两个请求试探。
+- **可观测**。每个请求一个 trace id（沿用 `X-Trace-Id` 或现生成），写进 MDC、回写响应头，并随转发头传给引擎；`/actuator/prometheus` 暴露 `gateway.request` 时延直方图与拒绝计数，按路由归一化，不让 id 把基数撑爆。
+
+## 分片上传与断点续传
+
+大文件不必一次 POST 完。客户端先开会话，再按 5 MB 分片 PUT，断线后 GET 一次就能知道哪几片已经落库：
+
+```bash
+UPLOAD=$(curl -s -X POST localhost:8017/api/kb/$KB/uploads \
+  -H 'Content-Type: application/json' -d '{"filename":"manual.pdf"}' | jq -r .upload_id)
+
+# 每片单独 PUT，顺序无所谓，失败只重传这一片
+curl -X PUT localhost:8017/api/kb/$KB/uploads/$UPLOAD/parts/1 \
+  --data-binary @part-1.bin
+
+# 断线重连后先问：哪些片已经在对象存储里
+curl localhost:8017/api/kb/$KB/uploads/$UPLOAD | jq '.uploaded, .bytes_received'
+
+# 片齐了再合并并入库；未 complete 之前不会产生文档
+curl -X POST localhost:8017/api/kb/$KB/uploads/$UPLOAD/complete \
+  -H 'Content-Type: application/json' -d '{"parts":[1,2,3]}'
+```
+
+分片状态在对象存储（S3/MinIO 的 multipart，本地模式落在 `.uploads/`），进程重启也能续传。`complete` 才解析、切块、入索引，失败会清掉暂存前缀，不会留半个文档。
 
 ## 扩展：MCP 与 Skill
 
@@ -200,7 +257,9 @@ curl localhost:8017/api/mcp/tools | jq '.items[] | {server, name, side_effect}'
 - **手点也一样留痕**：`POST /api/mcp/call` 无论成功、被门禁拦下还是上游报错，都会写一条 `mcp.call` 审计，带工具名、参数键和结果摘要。
 - **外部证据也能被引用**：工具返回的内容作为第 n+1 条来源进入上下文，和文档块一起编号，引用校验照样逐条回查——不是「模型说调过工具」就算数。开关在侧栏「设置」里，`GET/PUT /api/settings` 同步生效，重启后仍保留。
 
-Skill 是提示词侧的能力：一个目录一份 `SKILL.md`，front matter 写 `name` / `description`，正文是步骤。`GET /api/skills` 只列卡片，`GET /api/skills/{name}` 才返回正文——按需加载，不把全部提示词塞进上下文。
+Skill 是提示词侧的能力：一个目录一份 `SKILL.md`，front matter 写 `name` / `description`，正文是步骤。启动时只读卡片（`name` + `description` 建目录），子任务来了才按描述词面匹配挑最多 2 个，挑中之后才读正文进上下文。
+
+工具同理：外部 server 可能有几百个工具，全部塞给模型既贵又乱。worker 先按子任务问句打分，只把最相关的 6 个（可配 `NEXUS_MAX_TOOLS_PER_TASK`）放进这一轮的调色板，`ToolRegistry.scope()` 返回一个只暴露这几个工具的视图——注册表还是全局的，模型看到的不是。加载了哪些、为什么选它，事件流里有一条 `step.started` 带着工具名，前端能看见。
 
 ## 目录
 
@@ -210,6 +269,8 @@ apps/api      FastAPI 引擎
   app/mcp         MCP 客户端（stdio / streamable HTTP）与运行时发现
   app/rag         解析/分块/嵌入/BM25/RRF/重排/图谱/检索
     stores/       VectorStore / GraphStore 协议与 local/milvus/neo4j 实现
+  app/storage     原件存储（本地 / S3+MinIO，含分片上传）
+  app/cache       运行状态与最近对话缓存（进程内 / Redis）
   app/guard       引用守卫
   app/streaming   事件落库 + SSE 回放
   app/eval        指标与 CLI
@@ -222,11 +283,12 @@ tools         neo4j-embedded（本地 Bolt，联调用）
 
 写在这里是因为它们确实存在，不是待办清单：
 
-- 图谱召回用的是**词共现**，不是实体关系抽取；一跳之外不扩展。
+- 实体关系抽取的规则版只认「句子把关系说出口」的写法，模型版依赖外部接口；两者都不做实体消歧（「订单服务」和「订单系统」会是两个节点）。
 - 重排是启发式的（词面覆盖 + 位置），没有接 cross-encoder。
 - 默认 SQLite 单机；多实例部署需要换 PostgreSQL，并保证 `run_events` 共享。
 - 扫描件依赖外部 OCR 服务，仓库里不带模型权重。
 - 评估集规模小，只能证明链路没坏，证明不了效果上限。
+- 前端没有单测，也没做过并发压测；性能数字目前只有 SQL 调优那条从生产带回来的。
 
 ## 关于这个仓库
 

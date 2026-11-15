@@ -83,6 +83,8 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 
 原始文件单独存一份：分块是派生数据，引用里点「看原文」要的是上传的那份字节。`Document.object_key` 记录位置，删文档时按前缀清对象；老库通过 `ALTER TABLE` 前向补列，不用重建。
 
+分片上传的状态放在对象存储本身（S3 的 multipart upload / 本地 `.uploads/<id>/`），数据库只记「哪几片到了」：`uploads` 一行元信息，`upload_parts` 一行一片。这样进程重启、换实例都能续——断线后先 GET 一次拿到 `uploaded`，只补缺的片。`complete` 时才合并、解析、入库，之前不会出现半个文档。
+
 几个实际踩过的坑，写在这里免得再犯：
 
 - Milvus 集合被释放后状态是 `released`，直接 search 会报 `code=101 ... call load() before search`，重开集合后必须 `load_collection()`。
@@ -96,6 +98,8 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 - 两侧使用同一套白名单：`[A-Za-z0-9_.-]{1,32}`，首位必须是字母或数字，非法值回落 `local`。
 - 资源查询统一走 `_get_owned()`，跨租户返回 404 而不是 403。
 - 网关的 `ProxyController` 对每个上游请求显式设置租户头。`WebClient` 不会自动透传 exchange 的 header，漏写就会静默变成默认租户，隔离看起来生效、实际没有。
+- 角色同理：网关从 `key-roles` 取角色、缺省 `admin`、未知值降 `viewer`，把 `X-User-Role` 和 `X-User-Id` 一起下发。引擎只检查权限码（`kb:read/kb:write/doc:write/mcp:call/settings:write/audit:read`），不比较角色名——这样加一个角色只改一张表，不用改路由。
+- 用户与部门目前只到「租户 + 用户 + 角色」这一层，没有组织树；审计里记 `actor`，够回答「谁做的」，不够回答「他属于哪个部门」。
 
 ## 7. MCP 与 Skill
 
@@ -103,8 +107,8 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 - 连接是懒的，进程启动不 spawn；某个 server 抛错只从目录里移除它自己，`errors` 保留原因，其它 server 继续可用。
 - 只读判定：`readOnlyHint` → `destructiveHint` → 动词启发式。注解优先，因为 server 最清楚自己的副作用；启发式只兜住没写注解的 server。
 - 工具名统一为 `mcp.<server>.<tool>`，注册进同一个 `ToolRegistry`，权限码 `mcp:<server>` / `mcp:<server>:write`，写工具必须带审批令牌。
-- Skill 是磁盘上的 `<name>/SKILL.md`。列表接口只返回 front matter，正文按名字单独取，避免把全部提示词一次性塞进上下文。
-- 当前只在 `plan` 节点做一次发现（进程级幂等）。要做工具级懒加载，需要把目录按子任务相关度过滤后再注入，那是下一步。
+- Skill 是磁盘上的 `<name>/SKILL.md`。启动只读 front matter 建目录；子任务来了按描述词面匹配挑最多 2 个，挑中才读正文。
+- 工具按子任务裁剪：`choose_tools()` 对问句与工具名/描述打分，取前 N（默认 6，只读、参数可填），`ToolRegistry.scope()` 返回只含这几个工具的视图。注册表仍是全局的，模型看到的不是——几百个工具全塞进去既超预算也干扰选择。`plan` 节点仍然做一次全量发现，因为目录本身要完整，裁剪发生在 worker。
 
 ## 8. 评估
 

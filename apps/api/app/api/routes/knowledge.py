@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.schemas import DocumentOut, KnowledgeBaseIn, KnowledgeBaseOut
 from app.core.config import get_settings
+from app.core.rbac import Identity, require_permission
 from app.core.tenant import get_tenant
 from app.db.base import get_db
 from app.db.models import Chunk, Document, KnowledgeBase
@@ -33,8 +34,9 @@ def _get_owned(db: Session, kb_id: str, tenant_id: str) -> KnowledgeBase:
 def create_kb(
     payload: KnowledgeBaseIn,
     db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_tenant),
+    identity: Identity = Depends(require_permission("kb:write")),
 ) -> KnowledgeBase:
+    tenant_id = identity.tenant_id
     kb = KnowledgeBase(name=payload.name, description=payload.description, tenant_id=tenant_id)
     db.add(kb)
     db.flush()
@@ -44,7 +46,8 @@ def create_kb(
         action="kb.create",
         resource_type="knowledge_base",
         resource_id=kb.id,
-        detail={"name": kb.name},
+        actor=identity.user_id,
+        detail={"name": kb.name, "role": identity.role},
     )
     db.commit()
     db.refresh(kb)
@@ -53,8 +56,10 @@ def create_kb(
 
 @router.get("", response_model=list[KnowledgeBaseOut])
 def list_kb(
-    db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant)
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(require_permission("kb:read")),
 ) -> list[KnowledgeBase]:
+    tenant_id = identity.tenant_id
     rows = db.execute(
         select(
             KnowledgeBase,
@@ -73,8 +78,11 @@ def list_kb(
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseOut)
 def get_kb(
-    kb_id: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant)
+    kb_id: str,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(require_permission("kb:read")),
 ) -> KnowledgeBase:
+    tenant_id = identity.tenant_id
     kb = _get_owned(db, kb_id, tenant_id)
     docs = db.execute(select(func.count(Document.id)).where(Document.kb_id == kb_id)).scalar_one()
     chunks = db.execute(select(func.count(Chunk.id)).where(Chunk.kb_id == kb_id)).scalar_one()
@@ -83,8 +91,11 @@ def get_kb(
 
 @router.delete("/{kb_id}", status_code=204)
 def delete_kb(
-    kb_id: str, db: Session = Depends(get_db), tenant_id: str = Depends(get_tenant)
+    kb_id: str,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(require_permission("kb:write")),
 ) -> None:
+    tenant_id = identity.tenant_id
     kb = _get_owned(db, kb_id, tenant_id)
     audit.record(
         db,
@@ -92,6 +103,7 @@ def delete_kb(
         action="kb.delete",
         resource_type="knowledge_base",
         resource_id=kb_id,
+        actor=identity.user_id,
         detail={"name": kb.name},
     )
     db.delete(kb)
@@ -111,8 +123,9 @@ async def upload_document(
     kb_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_tenant),
+    identity: Identity = Depends(require_permission("doc:write")),
 ) -> Document:
+    tenant_id = identity.tenant_id
     _get_owned(db, kb_id, tenant_id)
     data = await file.read()
     filename = file.filename or "unnamed"
@@ -129,7 +142,7 @@ async def upload_document(
         action="document.upload",
         resource_type="document",
         resource_id=document.id,
-        detail={"kb_id": kb_id, "filename": filename, "size": len(data)},
+        detail={"kb_id": kb_id, "filename": filename, "size": len(data), "role": identity.role},
     )
     db.commit()
     db.refresh(document)
@@ -205,8 +218,9 @@ def delete_document(
     kb_id: str,
     doc_id: str,
     db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_tenant),
+    identity: Identity = Depends(require_permission("doc:write")),
 ) -> None:
+    tenant_id = identity.tenant_id
     _get_owned(db, kb_id, tenant_id)
     doc = db.get(Document, doc_id)
     if doc is None or doc.kb_id != kb_id:
@@ -217,7 +231,7 @@ def delete_document(
         action="document.delete",
         resource_type="document",
         resource_id=doc_id,
-        detail={"kb_id": kb_id, "filename": doc.filename},
+        detail={"kb_id": kb_id, "filename": doc.filename, "role": identity.role},
     )
     db.delete(doc)
     db.commit()

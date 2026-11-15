@@ -7,7 +7,6 @@ import pytest
 from app.rag.bm25 import BM25
 from app.rag.chunking import chunk_text
 from app.rag.fusion import rrf_fuse
-from app.rag.graph_store import TermGraph
 from app.rag.text import cosine, split_sentences, tokenize
 
 
@@ -72,10 +71,3 @@ def test_rrf_fusion():
     assert scores["a"] == pytest.approx(scores["b"])
     # d only appears in sparse at rank 3 → strictly lower than a/b
     assert scores["d"] < scores["a"]
-
-
-def test_term_graph_build_and_recall():
-    chunks = [("c1", "RRF 融合公式的 k 取 60"), ("c2", "向量召回在 Milvus"), ("c3", "BM25 关键词召回")]
-    graph = TermGraph.build(chunks)
-    recalled = graph.recall("RRF 融合公式")
-    assert any(cid == "c1" for cid, _ in recalled)

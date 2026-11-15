@@ -9,12 +9,32 @@ nexus:
   gateway:
     python-base-url: ${NEXUS_PYTHON_BASE_URL:http://127.0.0.1:8017}
     rate-limit-per-minute: ${NEXUS_GATEWAY_RATE_LIMIT:120}
+    rate-limit-burst: ${NEXUS_GATEWAY_RATE_BURST:60}
     upstream-timeout: 120s
     # key -> tenant. Empty disables auth (local development).
     api-keys: {}
+    # key -> admin|editor|viewer. A key without a role maps to admin; an
+    # unknown value maps to viewer, so a typo narrows access instead of widening it.
+    key-roles: {}
+    # Set to redis://127.0.0.1:6379 to share one token bucket across instances.
+    redis-url: ${NEXUS_GATEWAY_REDIS_URL:}
+    circuit-failure-rate: 50
+    circuit-sliding-window: 20
+    circuit-open-for: 20s
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: nexusagent-gateway
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId:-}] %logger{28} - %msg%n"

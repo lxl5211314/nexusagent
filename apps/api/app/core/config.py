@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # --- Storage backends --------------------------------------------------
     vector_backend: str = "local"  # local | milvus
     graph_backend: str = "local"  # local | neo4j
+    graph_extractor: str = "rule"  # rule | llm
+    max_tools_per_task: int = 6
+    max_skills_per_task: int = 2
     ocr_backend: str = "none"  # none | mineru | paddle
     object_backend: str = "local"  # local | s3
 

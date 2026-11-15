@@ -189,7 +189,7 @@ def test_mcp_routes_report_the_catalogue(monkeypatch):
     catalog = MCPCatalog([ServerConfig("srv", "local")], client_factory=lambda _: FakeClient(TOOLS))
     monkeypatch.setattr(extensions, "get_catalog", lambda: catalog)
 
-    client = TestClient(app)
+    client = TestClient(app, headers={"X-User-Role": "admin"})
     tools = client.get("/api/mcp/tools").json()
     assert {item["name"] for item in tools["items"]} == {"echo", "write_note"}
     assert tools["items"][0]["permission"].startswith("mcp:srv")
@@ -280,7 +280,7 @@ def test_mcp_call_is_audited(monkeypatch):
         MCPToolInfo("browser", "list_pages", "List open browser pages", {"type": "object"}, True)
     ]
     monkeypatch.setattr(extensions, "get_catalog", lambda: catalog)
-    headers = {"X-Tenant-Id": "audit-desk"}
+    headers = {"X-Tenant-Id": "audit-desk", "X-User-Role": "admin"}
     client = TestClient(app)
 
     missing = client.post(
@@ -319,3 +319,43 @@ def test_ensure_loaded_does_not_latch_on_empty_config(monkeypatch):
     assert catalog_module.register_catalog_tools(registry, Catalog()) == 1
     assert registry.list()[0]["name"] == "mcp.srv.ping"
     catalog_module.reset_loaded_flag()
+
+def test_choose_tools_returns_a_small_read_only_palette():
+    from app.mcp.catalog import MCPToolInfo
+    from app.mcp.router import choose_tools
+
+    tools = [
+        MCPToolInfo("srv", f"read_item_{i}", "read an item from the store", {"type": "object"}, True)
+        for i in range(10)
+    ]
+    tools.append(MCPToolInfo("srv", "delete_item", "read nothing", {"type": "object"}, False))
+
+    picked = choose_tools("read item", tools, limit=3)
+    assert len(picked) == 3
+    assert all(choice.name.startswith("read_item_") for choice in picked)
+
+
+def test_scoped_registry_hides_tools_not_selected():
+    from app.agent.tools import registry
+
+    view = registry.scope({"kb.search"})
+    assert [item["name"] for item in view.list()] == ["kb.search"]
+    with pytest.raises(PermissionDenied):
+        view.invoke("calc.eval", {"expression": "1+1"}, ToolContext(kb_id="k", run_id="r"))
+
+
+def test_skill_catalog_selects_by_description(tmp_path):
+    from app.agent.skills import load_body, load_catalog, select_skills
+
+    folder = tmp_path / "pdf-tools"
+    folder.mkdir()
+    (folder / "SKILL.md").write_text(
+        "---\nname: pdf-tools\ndescription: extract tables from pdf documents\n---\n\nUse pdftotext.\n",
+        encoding="utf-8",
+    )
+
+    cards = load_catalog(str(tmp_path))
+    picked = select_skills("extract tables from a pdf", cards)
+    assert [card.name for card in picked] == ["pdf-tools"]
+    assert "pdftotext" in load_body(picked[0])
+

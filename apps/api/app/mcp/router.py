@@ -60,6 +60,33 @@ def choose_tool(question: str, tools: list[MCPToolInfo], threshold: float = 0.34
     return best
 
 
+def choose_tools(
+    question: str, tools: list[MCPToolInfo], limit: int = 6, threshold: float = 0.12
+) -> list[ToolChoice]:
+    """Top-k read-only tools for one subtask (the per-task tool palette)."""
+    terms = set(tokenize(question))
+    if not terms:
+        return []
+    scored: list[tuple[float, MCPToolInfo, dict[str, Any]]] = []
+    for tool in tools:
+        if not tool.read_only:
+            continue
+        arguments = build_arguments(tool.input_schema)
+        if arguments is None:
+            continue
+        words = _name_tokens(tool) | set(tokenize(tool.description))
+        if not words:
+            continue
+        score = len(terms & words) / len(terms) + (0.2 if terms & _name_tokens(tool) else 0.0)
+        if score >= threshold:
+            scored.append((score, tool, arguments))
+    scored.sort(key=lambda item: (-item[0], item[1].name))
+    return [
+        ToolChoice(tool.server, tool.name, round(score, 3), arguments)
+        for score, tool, arguments in scored[:limit]
+    ]
+
+
 def build_arguments(schema: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return an argument dict, or None when a required field has no default."""
     properties = (schema or {}).get("properties") or {}
