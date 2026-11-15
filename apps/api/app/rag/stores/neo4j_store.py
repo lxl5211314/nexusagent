@@ -176,6 +176,66 @@ class Neo4jGraphStore:
             edges=int(record["edges"]),
         )
 
+    def snapshot(self, kb_id: str, limit: int = 200) -> dict:
+        with self._driver.session(database=self.database) as session:
+            node_rows = session.run(
+                """
+                MATCH (e:Entity {kb_id: $kb})
+                OPTIONAL MATCH (e)-[r:REL]-(:Entity {kb_id: $kb})
+                WITH e, count(r) AS degree
+                ORDER BY degree DESC, e.name
+                LIMIT $limit
+                RETURN e.name AS name, e.type AS type, degree
+                """,
+                kb=kb_id,
+                limit=limit,
+            ).data()
+            edge_rows = session.run(
+                """
+                MATCH (a:Entity {kb_id: $kb})-[r:REL]->(b:Entity {kb_id: $kb})
+                RETURN a.name AS source, r.type AS relation, b.name AS target,
+                       coalesce(r.weight, 1.0) AS weight
+                LIMIT $limit
+                """,
+                kb=kb_id,
+                limit=limit * 4,
+            ).data()
+            mention_rows = session.run(
+                """
+                MATCH (c:Chunk {kb_id: $kb})-[:MENTIONS]->(e:Entity {kb_id: $kb})
+                RETURN e.name AS name, collect(c.id)[..8] AS chunks
+                """,
+                kb=kb_id,
+            ).data()
+
+        mentions = {row["name"]: row["chunks"] for row in mention_rows}
+        nodes = [
+            {
+                "name": row["name"],
+                "type": row["type"] or "concept",
+                "degree": int(row["degree"]),
+                "mentions": mentions.get(row["name"], []),
+            }
+            for row in node_rows
+        ]
+        kept = {node["name"] for node in nodes}
+        edges = [
+            {
+                "source": row["source"],
+                "relation": row["relation"],
+                "target": row["target"],
+                "weight": float(row["weight"]),
+            }
+            for row in edge_rows
+            if row["source"] in kept and row["target"] in kept
+        ]
+        stats = self.stats(kb_id)
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "stats": {"nodes": stats.nodes, "edges": stats.edges, "chunks": stats.chunks},
+        }
+
     def health(self) -> dict:
         try:
             self._driver.verify_connectivity()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.rag.index import get_index
+from app.rag.kg import graph_snapshot
 from app.rag.stores.base import StoreStats, VectorRecord
 
 
@@ -39,6 +40,12 @@ class LocalGraphStore:
     def stats(self, kb_id: str) -> StoreStats:
         stats = get_index(kb_id).stats()
         return StoreStats(backend="local", chunks=stats.chunks, nodes=stats.nodes, edges=stats.edges)
+
+    def snapshot(self, kb_id: str, limit: int = 200) -> dict:
+        graph = get_index(kb_id).graph
+        if graph is None:
+            return {"nodes": [], "edges": [], "stats": {"nodes": 0, "edges": 0, "chunks": 0}}
+        return graph_snapshot(graph, limit)
 
     def delete_kb(self, kb_id: str) -> None:
         return None

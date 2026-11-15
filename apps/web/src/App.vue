@@ -55,6 +55,104 @@ async function refreshOrg() {
   orgTree.value = r.ok ? await r.json() : []
 }
 
+const graph = ref({ nodes: [], edges: [], stats: { nodes: 0, edges: 0, chunks: 0 } })
+const graphLoading = ref(false)
+const graphNode = ref(null)
+const graphPos = ref({})
+
+// A tiny deterministic force layout: no dependency, stable enough for a
+// 300px panel, and the same graph always lands in the same shape.
+function layoutGraph(payload) {
+  const nodes = payload.nodes.map((node, index) => ({ ...node, x: 0, y: 0, i: index }))
+  const n = nodes.length
+  if (!n) return {}
+  const W = 300
+  const H = 260
+  const radius = Math.min(W, H) / 2 - 26
+  nodes.forEach((node, i) => {
+    const angle = (i / n) * Math.PI * 2
+    node.x = W / 2 + radius * Math.cos(angle)
+    node.y = H / 2 + radius * Math.sin(angle)
+  })
+  const byName = new Map(nodes.map((node) => [node.name, node]))
+  const links = payload.edges
+    .map((edge) => ({ a: byName.get(edge.source), b: byName.get(edge.target), w: edge.weight || 1 }))
+    .filter((link) => link.a && link.b)
+
+  for (let step = 0; step < 220; step += 1) {
+    const cooling = 1 - step / 260
+    for (let i = 0; i < n; i += 1) {
+      for (let j = i + 1; j < n; j += 1) {
+        const a = nodes[i]
+        const b = nodes[j]
+        let dx = a.x - b.x
+        let dy = a.y - b.y
+        let dist2 = dx * dx + dy * dy
+        if (dist2 < 1) {
+          dx = (i % 2 ? 1 : -1) * 0.6
+          dy = 0.4
+          dist2 = 1
+        }
+        const force = (2400 / dist2) * cooling
+        const dist = Math.sqrt(dist2)
+        a.x += (dx / dist) * force
+        a.y += (dy / dist) * force
+        b.x -= (dx / dist) * force
+        b.y -= (dy / dist) * force
+      }
+    }
+    for (const link of links) {
+      const dx = link.b.x - link.a.x
+      const dy = link.b.y - link.a.y
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1
+      const target = 78
+      const pull = ((dist - target) / dist) * 0.06 * cooling
+      link.a.x += dx * pull
+      link.a.y += dy * pull
+      link.b.x -= dx * pull
+      link.b.y -= dy * pull
+    }
+    for (const node of nodes) {
+      node.x += (W / 2 - node.x) * 0.012 * cooling
+      node.y += (H / 2 - node.y) * 0.012 * cooling
+      node.x = Math.max(18, Math.min(W - 18, node.x))
+      node.y = Math.max(16, Math.min(H - 16, node.y))
+    }
+  }
+  const out = {}
+  for (const node of nodes) out[node.name] = { x: Math.round(node.x), y: Math.round(node.y) }
+  return out
+}
+
+async function loadGraph() {
+  if (!activeKb.value) return
+  graphLoading.value = true
+  const r = await api(`/api/kb/${activeKb.value.id}/graph?limit=60`)
+  if (r.ok) {
+    const payload = await r.json()
+    graph.value = payload
+    graphPos.value = layoutGraph(payload)
+  }
+  graphLoading.value = false
+}
+
+function pickNode(node) {
+  graphNode.value = graphNode.value?.name === node.name ? null : node
+}
+
+async function openChunk(chunkId) {
+  if (!activeKb.value) return
+  drawer.value = { chunk_id: chunkId, doc_name: '原文块', heading: '', snippet: '', full: '', loading: true }
+  const r = await api(`/api/kb/${activeKb.value.id}/chunks/${chunkId}`)
+  if (!drawer.value || drawer.value.chunk_id !== chunkId) return
+  if (r.ok) {
+    const body = await r.json()
+    drawer.value = { ...drawer.value, doc_name: body.doc_name || '原文块', heading: body.heading, full: body.content, loading: false }
+  } else {
+    drawer.value.loading = false
+  }
+}
+
 async function addDept() {
   const name = orgDraft.value.name.trim()
   if (!name) return
@@ -124,6 +222,7 @@ async function refreshKbs() {
   if (kbs.value.length && !activeKb.value) {
     activeKb.value = kbs.value[0]
     await refreshDocs()
+    await loadGraph()
   }
 }
 
@@ -205,7 +304,10 @@ async function createKb() {
 
 async function selectKb(kb) {
   activeKb.value = kb
+  graphNode.value = null
+  graph.value = { nodes: [], edges: [], stats: { nodes: 0, edges: 0, chunks: 0 } }
   await refreshDocs()
+  await loadGraph()
 }
 
 async function uploadFile() {
@@ -651,6 +753,49 @@ onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory(); refreshOrg(
               </option>
             </select>
             <button class="btn sm" @click="addDept">新增</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="trace-block" v-if="activeKb">
+        <div class="head">
+          <button class="fold" @click="toggleFold('kg')">{{ folded.kg ? '▸' : '▾' }} 知识图谱 · {{ graph.stats.nodes }} 实体 / {{ graph.stats.edges }} 关系</button>
+          <button class="btn sm" @click="loadGraph">{{ graphLoading ? '读取中' : '加载' }}</button>
+        </div>
+        <div v-show="!folded.kg">
+          <svg v-if="graph.nodes.length" class="kg" viewBox="0 0 300 260">
+            <line
+              v-for="(edge, i) in graph.edges"
+              :key="'e' + i"
+              :x1="graphPos[edge.source]?.x"
+              :y1="graphPos[edge.source]?.y"
+              :x2="graphPos[edge.target]?.x"
+              :y2="graphPos[edge.target]?.y"
+              class="kg-edge"
+            />
+            <g v-for="node in graph.nodes" :key="node.name" class="kg-node" @click="pickNode(node)">
+              <circle
+                :cx="graphPos[node.name]?.x"
+                :cy="graphPos[node.name]?.y"
+                :r="4 + Math.min(9, node.degree * 1.6)"
+                :class="'kg-' + node.type"
+                :stroke="graphNode?.name === node.name ? 'var(--accent)' : 'transparent'"
+              />
+              <text
+                v-if="node.degree >= 2 || graphNode?.name === node.name"
+                :x="graphPos[node.name]?.x"
+                :y="graphPos[node.name]?.y - 10"
+                class="kg-label"
+              >{{ node.name }}</text>
+            </g>
+          </svg>
+          <div v-if="!graph.nodes.length" class="row">还没有图谱数据；上传文档后点「加载」</div>
+          <div v-if="graphNode" class="kg-detail">
+            <div class="kg-title">{{ graphNode.name }} <span class="dim">{{ graphNode.type }} · {{ graphNode.degree }} 条关系</span></div>
+            <div class="row">出现在 {{ graphNode.mentions.length }} 个文本块：</div>
+            <button v-for="chunkId in graphNode.mentions" :key="chunkId" class="chip" @click="openChunk(chunkId)">
+              {{ chunkId.slice(0, 8) }}
+            </button>
           </div>
         </div>
       </div>

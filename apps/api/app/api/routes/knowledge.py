@@ -205,6 +205,25 @@ def get_chunk(
     }
 
 
+@router.get("/{kb_id}/graph")
+def get_graph(
+    kb_id: str,
+    limit: int = 200,
+    db: Session = Depends(get_db),
+    identity: Identity = Depends(require_permission("kb:read")),
+) -> dict:
+    """Entities and typed relations extracted from this knowledge base.
+
+    The UI draws it as a small force-directed view: every node knows which
+    chunks mention it, so a click can jump back to the source text.
+    """
+    _get_owned(db, kb_id, identity)
+    store = get_graph_store()
+    payload = store.snapshot(kb_id, max(10, min(limit, 500)))
+    payload["backend"] = store.backend
+    return payload
+
+
 @router.get("/{kb_id}/documents/{doc_id}/content")
 def download_document(
     kb_id: str,

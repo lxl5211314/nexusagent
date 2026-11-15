@@ -15,11 +15,20 @@ from typing import Protocol
 from app.core.config import get_settings
 from app.rag.text import split_sentences, tokenize
 
-MAX_ENTITY_LEN = 24
+MAX_ENTITY_LEN = 16
 MIN_ENTITY_LEN = 2
 
-_ENTITY_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9_.\-+]{2,24}$")
+_ENTITY_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9_.\-+]{2,16}$")
 _TRAILING = "的 了 和 与 及 或 等 中 上 下 里 也 还 就 都 再 又"
+_CLAUSE_MARK = re.compile(
+    r"(?:并且|而且|但是|不过|同时|然后|因此|所以|因为|由于|其中|如果|之后|之前|以后|以前|可能|通常|往往|容易|仍然|即|则|就|也|都|还|并|而|但|或)"
+)
+_PARTICLE = re.compile(r"(?:的|了|和|与|及|或|等|中|上|下|里)")
+_LEADING_PREP = re.compile(r"^(?:于|在|对|把|被)+")
+_VERB_PHRASES = {
+    "拒绝回答", "拒绝", "支持", "提供", "包括", "包含", "生成", "返回",
+    "调用", "使用", "负责", "执行", "处理", "完成", "实现",
+}
 _STOPWORDS = {
     "这个", "那个", "我们", "你们", "他们", "它们", "目前", "同时", "此外", "因此",
     "所以", "但是", "如果", "可以", "需要", "应该", "已经", "不是", "没有", "一个",
@@ -106,7 +115,14 @@ def entity_type(name: str) -> str:
 
 
 def _clean(raw: str, *, take: str) -> str:
-    """Trim a fragment down to the phrase adjacent to the connector."""
+    """Trim a fragment down to the phrase adjacent to the connector.
+
+    Chinese sentences rarely carry the punctuation that separates a subject from
+    its predicate, so a plain split leaves whole clauses behind. The two extra
+    cuts below keep the boundary at a conjunction: the head keeps what follows
+    the last clause marker, the tail stops at the first particle that opens a
+    new clause.
+    """
     text = raw.strip().strip("：:，,。.;；!！?？、\"'`（）()[]【】<>《》 ")
     if not text:
         return ""
@@ -116,13 +132,26 @@ def _clean(raw: str, *, take: str) -> str:
         return ""
     candidate = parts[-1] if take == "tail" else parts[0]
     candidate = candidate.strip(_TRAILING).strip()
+    if take == "tail":
+        marks = list(_CLAUSE_MARK.finditer(candidate))
+        if marks:
+            candidate = candidate[marks[-1].end():].strip(_TRAILING).strip()
+    else:
+        chunks = [p for p in candidate.split("的") if p]
+        if len(chunks) > 1:
+            candidate = max(chunks, key=len).strip(_TRAILING).strip()
+        else:
+            head = _PARTICLE.search(candidate)
+            if head and head.start() >= MIN_ENTITY_LEN:
+                candidate = candidate[: head.start()].strip(_TRAILING).strip()
+        candidate = _LEADING_PREP.sub("", candidate).strip(_TRAILING).strip()
     for suffix in ("组成", "构成", "而来", "实现", "完成"):
         if candidate.endswith(suffix) and len(candidate) > len(suffix) + 1:
             candidate = candidate[: -len(suffix)].strip(_TRAILING).strip()
             break
     if len(candidate) < MIN_ENTITY_LEN or len(candidate) > MAX_ENTITY_LEN:
         return ""
-    if candidate in _STOPWORDS or not _ENTITY_RE.match(candidate):
+    if candidate in _STOPWORDS or candidate in _VERB_PHRASES or not _ENTITY_RE.match(candidate):
         return ""
     return candidate
 
@@ -307,6 +336,32 @@ class EntityGraph:
     def stats(self) -> dict[str, int]:
         chunks = {chunk_id for ids in self.mentions.values() for chunk_id in ids}
         return {"nodes": len(self.types), "edges": len(self.relations), "chunks": len(chunks)}
+
+
+def graph_snapshot(graph: EntityGraph, limit: int = 200) -> dict:
+    """Flatten the graph for the UI: nodes carry their type, degree and source chunks."""
+    degree: dict[str, int] = {}
+    for head, _relation, tail, _weight in graph.relations:
+        degree[head] = degree.get(head, 0) + 1
+        degree[tail] = degree.get(tail, 0) + 1
+
+    names = sorted(graph.types, key=lambda name: (-degree.get(name, 0), name))[:limit]
+    kept = set(names)
+    nodes = [
+        {
+            "name": name,
+            "type": graph.types[name],
+            "degree": degree.get(name, 0),
+            "mentions": sorted(graph.mentions.get(name, ()))[:8],
+        }
+        for name in names
+    ]
+    edges = [
+        {"source": head, "relation": relation, "target": tail, "weight": weight}
+        for head, relation, tail, weight in graph.relations
+        if head in kept and tail in kept
+    ]
+    return {"nodes": nodes, "edges": edges, "stats": graph.stats()}
 
 
 _extractor: Extractor | None = None

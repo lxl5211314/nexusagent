@@ -152,7 +152,9 @@ supervisor ──▶ route() ──▶ plan ──▶ dispatch ──┬─▶ w
 
 引用抽屉：`check_answer` 里只带 `snippet`，而 snippet 是压缩后的句子集合——读者点开时想核对的是原文，不是压缩结果。所以前端点引用后单独打 `GET /api/kb/{kb}/chunks/{chunk_id}` 取整块内容。接口按 `kb_id` 校验租户属主，跨租户一律 404；外部工具来源（`chunk_id` 形如 `mcp.server.tool`）没有对应行，直接用 citation 自带的正文。
 
-## 11. 链路追踪
+图谱可视化：`EntityGraph` 只活在内存里，前端要的是「少量节点 + 边 + 出处」，所以 `graph_snapshot()` 按度数取前 N 个实体，节点带 `mentions[:8]`，边带权重；`GraphStore.snapshot()` 让 local 与 neo4j 两种后端返回同一结构（Neo4j 用一次 `OPTIONAL MATCH … count(r)` 出度数，避免 N+1）。前端不引入 d3：节点数在百级，固定 220 轮力导向足够，且结果确定——同一份数据每次布局一致，截图可复现。
+
+## 12. 链路追踪
 
 - 不挂 agent 也能跑：`TraceBridge` 用反射读 `TraceContext.traceId()`，取不到就退回网关自己生成的 16 位 id。APM 是可选依赖，不能成为启动前提。
 - 三个 id 各司其职：`X-Trace-Id` 是应用层关联键（日志 MDC、响应头、引擎侧 `TraceMiddleware` 回显），`sw8` 是 SkyWalking 的跨进程段头，转发时原样带给上游。部分实例挂了 agent 时，链路不会断成两截。
