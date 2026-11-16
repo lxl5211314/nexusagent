@@ -34,7 +34,18 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-#app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
+/* 整体按 90% 渲染：同一块屏幕上多放一点内容，字号/间距/图表等比缩小。
+   不支持 zoom 的浏览器走 @supports 之外的分支，保持 100% 不变。 */
+@supports (zoom: 0.9) {
+  html { zoom: 0.9; }
+}
+
+#app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+
+@supports (zoom: 0.9) {
+  /* zoom 之后 100dvh 只有视口的 90%，补回来 */
+  #app { height: calc(100dvh / 0.9); }
+}
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: #242c3a; border-radius: 9px; border: 2px solid transparent; background-clip: content-box; }
@@ -109,6 +120,7 @@ body {
 }
 
 .sidebar {
+  min-height: 0;
   border-right: 1px solid var(--line);
   padding: 14px 12px 20px;
   overflow-y: auto;
@@ -409,6 +421,7 @@ body {
 /* ---------- right panel ---------- */
 
 .panel {
+  min-height: 0;
   border-left: 1px solid var(--line);
   padding: 14px 14px 24px;
   overflow-y: auto;
