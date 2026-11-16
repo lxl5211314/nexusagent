@@ -37,6 +37,8 @@ const folded = ref({})
 const orgTree = ref([])
 const orgDraft = ref({ name: '', parent_id: '' })
 const kbDept = ref('')
+const navOpen = ref(false)
+const panelOpen = ref(false)
 
 const flatOrg = computed(() => {
   const rows = []
@@ -304,6 +306,7 @@ async function createKb() {
 
 async function selectKb(kb) {
   activeKb.value = kb
+  navOpen.value = false
   graphNode.value = null
   graph.value = { nodes: [], edges: [], stats: { nodes: 0, edges: 0, chunks: 0 } }
   await refreshDocs()
@@ -575,6 +578,7 @@ onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory(); refreshOrg(
 
 <template>
   <div class="topbar">
+    <button class="btn ghost nav-toggle" @click="navOpen = !navOpen" title="知识库与文档" aria-label="知识库与文档">☰</button>
     <div class="brand">
       <span class="mark">N</span>
       <div>
@@ -588,9 +592,11 @@ onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory(); refreshOrg(
     <span v-else-if="runStatus==='completed'" class="status-badge completed">已完成</span>
     <span v-else-if="runStatus==='failed'" class="status-badge failed">失败</span>
     <span v-else class="status-badge idle">就绪</span>
+    <button class="btn ghost nav-toggle panel-toggle" @click="panelOpen = !panelOpen" title="运行面板" aria-label="运行面板">▤</button>
   </div>
 
-  <div class="main">
+  <div class="main" :class="{ 'nav-open': navOpen, 'panel-open': panelOpen }">
+    <div class="scrim" @click="navOpen = false; panelOpen = false"></div>
     <div class="sidebar">
       <div class="side-section">
         <h3>工作空间</h3>
