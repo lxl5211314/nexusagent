@@ -20,7 +20,7 @@
 
 * { box-sizing: border-box; }
 
-html, body { height: 100%; }
+html, body { height: 100%; overflow: hidden; }
 
 body {
   margin: 0;
@@ -105,6 +105,8 @@ body {
   display: grid;
   /* The right rail grows on wide screens instead of leaving a dead strip. */
   grid-template-columns: 232px minmax(0, 1fr) clamp(320px, 21vw, 410px);
+  /* 行高必须被容器钉住：默认的 auto 行会跟着最高那一列长，把输入条顶出视口 */
+  grid-template-rows: minmax(0, 1fr);
   min-height: 0;
 }
 
