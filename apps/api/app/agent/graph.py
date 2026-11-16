@@ -27,7 +27,7 @@ from app.agent.llm import get_llm
 from app.agent.state import AgentState, Finding
 from app.agent.tools import ToolContext, registry
 from app.core.config import get_settings
-from app.guard.citation import check_answer
+from app.guard.citation import CitationCheck, check_answer, parse_citations
 from app.rag.retriever import RetrievedChunk, retrieve
 
 log = logging.getLogger(__name__)
@@ -214,7 +214,12 @@ async def synthesize(state: AgentState, config: RunnableConfig) -> dict[str, Any
         _emit(config, "token", {"text": delta})
     answer = "".join(answer_parts)
 
-    check = check_answer(answer, contexts)
+    settings = get_settings()
+    check = (
+        check_answer(answer, contexts, min_support=settings.citation_min_support)
+        if settings.guard_enabled
+        else CitationCheck(valid=True)
+    )
     if not check.valid:
         _emit(config, "guard.violation", {"violations": check.violations, "attempt": attempts + 1})
 
@@ -232,13 +237,13 @@ async def finalize(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     contexts = state.get("contexts", [])
     valid = state.get("answer_valid", False)
 
-    cited_ids = {c.chunk_id for c in state.get("citations", [])}
-    used = [ctx for ctx in contexts if ctx.chunk_id in cited_ids]
-    if used:
-        confidence = sum(max(0.0, min(1.0, ctx.scores.get("rerank", 0.0) * 2.0)) for ctx in used) / len(used)
-    else:
-        confidence = 0.0
-    refused = (not valid) or confidence < settings.low_confidence_threshold
+    # Confidence is measured from the answer text, not from the guard's output:
+    # the guard-off arm must still report how strong its evidence was, otherwise
+    # the two arms are not comparable.
+    cited = parse_citations(state.get("answer") or "")
+    used = [contexts[i - 1] for i in cited if 1 <= i <= len(contexts)]
+    confidence = max((max(0.0, min(1.0, ctx.scores.get("rerank", 0.0))) for ctx in used), default=0.0)
+    refused = (not valid) or (settings.guard_enabled and confidence < settings.low_confidence_threshold)
 
     _emit(
         config,

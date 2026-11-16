@@ -46,8 +46,13 @@ class Settings(BaseSettings):
     max_subtasks: int = 4
 
     # --- Guard -------------------------------------------------------------
+    guard_enabled: bool = True  # off = prompt-only baseline for the ablation
     citation_max_retry: int = 1
-    low_confidence_threshold: float = 0.35
+    citation_min_support: float = 0.5
+    # Rerank scores are heuristic overlap in [0, 1]; 0.30 is calibrated on the
+    # labeled dev set (see docs/DESIGN.md) and must be re-tuned if the reranker
+    # is swapped for a cross-encoder.
+    low_confidence_threshold: float = 0.30
 
     # --- Storage backends --------------------------------------------------
     vector_backend: str = "local"  # local | milvus

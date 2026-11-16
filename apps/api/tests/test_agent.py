@@ -50,10 +50,26 @@ def test_check_answer_out_of_range():
 
 
 def test_check_answer_valid():
-    ctxs = [_ctx(i) for i in range(1, 4)]
-    check = check_answer("结论 [2] 和 [1]。", ctxs)
+    ctxs = [_ctx(i, content="结论来自检索到的知识块。") for i in range(1, 4)]
+    check = check_answer("结论来自知识块 [2]。", ctxs)
     assert check.valid
-    assert {c.index for c in check.citations} == {1, 2}
+    assert {c.index for c in check.citations} == {2}
+    assert check.support >= 0.8
+
+
+def test_check_answer_rejects_a_citation_that_does_not_support_the_sentence():
+    ctxs = [_ctx(1, content="RRF 的 k 取 60。"), _ctx(2, content="重排之后保留 Top-5。")]
+    check = check_answer("生产环境推荐使用 8 核 32GB 的机器 [1]。", ctxs)
+    assert not check.valid
+    assert "unsupported claim" in check.violations[0]
+    assert check.support < 0.5
+
+
+def test_check_answer_rejects_a_long_uncited_claim():
+    ctxs = [_ctx(1, content="RRF 的 k 取 60。")]
+    check = check_answer("RRF 的 k 取 60 [1]。另外系统还支持离线部署与国产化适配并且通过等保三级认证。", ctxs)
+    assert not check.valid
+    assert any(v.startswith("uncited claim") for v in check.violations)
 
 
 def test_mock_llm_compose_has_citation():

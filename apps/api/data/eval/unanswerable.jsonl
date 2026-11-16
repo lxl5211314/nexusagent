@@ -1,0 +1,18 @@
+{"question": "部署 NexusAgent 最少需要多少内存？", "answerable": false}
+{"question": "生成答案用的是哪家大模型？", "answerable": false}
+{"question": "Rerank 用的是哪个重排模型？", "answerable": false}
+{"question": "系统能承受的 QPS 上限是多少？", "answerable": false}
+{"question": "项目的开源许可证是哪一种？", "answerable": false}
+{"question": "单个文档的大小上限是多少？", "answerable": false}
+{"question": "数据库怎么做备份和恢复？", "answerable": false}
+{"question": "界面支持哪几种语言？", "answerable": false}
+{"question": "向量维度设成多少？", "answerable": false}
+{"question": "向量索引用的是 HNSW 还是 IVF？", "answerable": false}
+{"question": "有没有移动端 App？", "answerable": false}
+{"question": "目前有多少家企业上线使用？", "answerable": false}
+{"question": "和 Dify、FastGPT 这类产品有什么区别？", "answerable": false}
+{"question": "服务的 SLA 承诺是多少？", "answerable": false}
+{"question": "支持 LDAP 或 SSO 单点登录吗？", "answerable": false}
+{"question": "审计日志保留多少天？", "answerable": false}
+{"question": "分块大小设成多少 token？", "answerable": false}
+{"question": "支持多轮对话的上下文继承吗？", "answerable": false}
