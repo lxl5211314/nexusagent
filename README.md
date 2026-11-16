@@ -165,6 +165,34 @@ curl -s localhost:8017/api/system/backends           # 确认真的连上了
 
 没有容器环境也能验证：`pip install -e ".[stores-lite]"` 用 Milvus Lite，`tools/neo4j-embedded` 用 `neo4j-harness` 起进程内 Bolt，跑 `python -m scripts.live_check`。
 
+### 图谱后端是 Neo4j 时的界面
+
+切后端只改环境变量，代码里没有分支判断：
+
+```bash
+docker run -d --name nexus-neo4j -p 7474:7474 -p 7687:7687 \
+  -e NEO4J_AUTH=neo4j/nexusagent neo4j:5.26-community
+
+NEXUS_GRAPH_BACKEND=neo4j \
+NEXUS_NEO4J_URI=bolt://127.0.0.1:7687 \
+NEXUS_NEO4J_USER=neo4j \
+NEXUS_NEO4J_PASSWORD=nexusagent \
+uvicorn app.main:app --port 8017
+
+curl -s localhost:8017/api/system/backends
+# {"graph":{"backend":"neo4j","ok":true}, ...}
+```
+
+右栏「引擎状态」会显示 `知识图谱 neo4j`，图谱面板仍显示 62 实体 / 16 关系——数字来自 `GET /api/kb/{id}/graph` 里的 Cypher 查询，不是本地缓存的副本：
+
+![产品前端读到 Neo4j](docs/images/neo4j-backend-frontend.png)
+
+同一个库用 Neo4j 自带的 Browser（`http://127.0.0.1:7474`）打开，`MATCH p=(:Entity)-[:REL]->(:Entity) RETURN p LIMIT 100` 得到 16 条关系、30 个带出边的实体（剩下 32 个是孤立实体，不满足模式）：
+
+![Neo4j Browser 里的同一个图](docs/images/neo4j-browser.png)
+
+两者不是一回事：Browser 是数据库控制台，用来核对写进去的东西；产品页面是 Vue 前端，节点按 `type` 上色、点节点出详情卡、点 mention 芯片直接打开原文块。停掉 Neo4j 容器后 `/api/system/backends` 的 `graph.ok` 变 `false`，问答链路仍能用本地图谱跑完——存储后端是可替换的，不是唯一依赖。
+
 ### 换成 BGE 嵌入
 
 默认的 `hash` 嵌入是为了离线可跑，不是效果方案。接真模型只要改环境变量——任何 OpenAI 兼容的 `/embeddings` 都行：
