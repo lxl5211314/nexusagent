@@ -12,6 +12,10 @@
   <img src="docs/images/mobile.png" alt="390px 宽度下的单列布局" width="300">
 </p>
 
+一次完整的问答长这样（19 秒）：提问 → 五步执行过程 → 答案带两个引用 → 点引用弹出原文块 → 点图谱节点看实体出现在哪些块。
+
+![一次问答的完整链路](docs/images/demo.gif)
+
 ## 为什么做这个
 
 企业里的制度、规范、产品文档和 FAQ 散在 OA、网盘、Confluence、邮件里，员工找不到，只能问人。把大模型直接接上去看着能用，但有两个问题绕不过去：
@@ -109,7 +113,7 @@ python -m app.eval.guard_cli --kb <id> --show-cases        # 逐题看答案和�
 - 三路召回命中 2 条，分数里能看到 `dense / sparse / graph / rrf / rerank` 各自的值
 - 删库后两个外部库都归零（`scripts/live_cleanup.py` 断言）
 
-测试：后端 125 个用例（含 fakeredis 驱动的跨实例事件总线、运行状态缓存、分片上传、部门数据权限、护栏两臂评估和可选的真实存储联调），网关 12 个用例，全部离线可跑。
+测试：后端 125 个用例（含 fakeredis 驱动的跨实例事件总线、运行状态缓存、分片上传、部门数据权限、护栏两臂评估和可选的真实存储联调），网关 12 个用例，全部离线可跑。CI 里 `pytest --cov=app --cov-fail-under=75`，当前行覆盖率 82%（`app/eval/cli.py`、`guard_cli.py` 是命令行入口，不计入）；剩下没覆盖的主要是 Milvus / Neo4j / S3 三个外部适配器的真实读写分支，它们由 `scripts/live_check.py` 在起容器的联调里跑，不进离线套件。
 
 ## 知识图谱里存的是什么
 
