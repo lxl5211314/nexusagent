@@ -113,7 +113,23 @@ python -m app.eval.guard_cli --kb <id> --show-cases        # 逐题看答案和�
 - 三路召回命中 2 条，分数里能看到 `dense / sparse / graph / rrf / rerank` 各自的值
 - 删库后两个外部库都归零（`scripts/live_cleanup.py` 断言）
 
-测试：后端 125 个用例（含 fakeredis 驱动的跨实例事件总线、运行状态缓存、分片上传、部门数据权限、护栏两臂评估和可选的真实存储联调），网关 12 个用例，全部离线可跑。CI 里 `pytest --cov=app --cov-fail-under=75`，当前行覆盖率 82%（`app/eval/cli.py`、`guard_cli.py` 是命令行入口，不计入）；剩下没覆盖的主要是 Milvus / Neo4j / S3 三个外部适配器的真实读写分支，它们由 `scripts/live_check.py` 在起容器的联调里跑，不进离线套件。
+### 拒答时显示什么，问候怎么处理
+
+拒答不是给答案盖个「已拒答」的章就完事。改之前问「你好」，流程是 plan → 检索 → 生成，模型从检索到的块里拼出一段讲 RRF 公式的话，然后被护栏判为无依据——前端却把这段猜测原样显示，只在旁边标了「已拒答」。现在两条路分开走（`apps/api/app/agent/smalltalk.py`）：
+
+- 寒暄和身份问题（「你好」「你是谁」「谢谢」）不进检索，直接由 `identity` 节点回答，不产生引用，也不参与置信度门。
+- 语料内但找不到依据的问题，`finalize` 发一个 `answer.replaced` 事件，把已经流式输出的草稿整段替换成解释性拒答文案；`run.completed` 里的 `answer` 是同一段文本，所以刷新、重放、`GET /runs/{id}` 看到的都一样。
+
+```
+$ curl -s -X POST localhost:8017/api/chat/stream -d '{"kb_id":"<id>","question":"你好"}'
+event: step.started   {"node":"identity","note":"自我介绍，不检索知识库"}
+event: token          {"text":"你好。我是 NexusAgent，「NexusAgent 示例库」的问答助手。"}
+event: run.completed  {"kind":"greeting","refused":false,"confidence":1.0,"citations":[]}
+```
+
+判据都进了单测（`tests/test_smalltalk.py`）：「你好，RRF 的 k 取多少」这类带称呼的真问题仍走检索，长句里出现「你是谁」不误判，拒答必须替换正文，身份回答不被置信度门拒掉。
+
+测试：后端 135 个用例（含 fakeredis 驱动的跨实例事件总线、运行状态缓存、分片上传、部门数据权限、护栏两臂评估、寒暄与拒答替换和可选的真实存储联调），网关 12 个用例，全部离线可跑。CI 里 `pytest --cov=app --cov-fail-under=75`，当前行覆盖率 82%（`app/eval/cli.py`、`guard_cli.py` 是命令行入口，不计入）；剩下没覆盖的主要是 Milvus / Neo4j / S3 三个外部适配器的真实读写分支，它们由 `scripts/live_check.py` 在起容器的联调里跑，不进离线套件。
 
 ## 知识图谱里存的是什么
 
@@ -193,6 +209,15 @@ curl -N -X POST localhost:8017/api/chat/stream \
   -H 'Content-Type: application/json' \
   -d '{"kb_id":"<kb_id>","question":"RRF 的 k 取多少？"}'
 ```
+
+不想装 Python 和 Node，就两条命令：
+
+```bash
+docker compose -f docker-compose.lite.yml up --build -d
+# 首次启动会灌好示例库，打开 http://localhost:8088
+```
+
+两个容器：`api`（FastAPI，SQLite 落在命名卷，启动时跑 `python -m app.seed`）和 `web`（nginx，`/api/` 反代并关掉缓冲，SSE 才不会被攒成一坨）。
 
 ## 换成 Milvus / Neo4j
 

@@ -67,5 +67,6 @@ class AgentState(TypedDict, total=False):
     citations: list[Citation]
     confidence: float
     refused: bool
+    kind: str
     attempts: int
     violations: list[str]

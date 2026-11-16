@@ -3,5 +3,7 @@ __pycache__
 *.pyc
 .pytest_cache
 .ruff_cache
-data
+data/*.db
+data/uploads
+data/eval
 tests

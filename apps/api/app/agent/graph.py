@@ -24,9 +24,11 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
 from app.agent.llm import get_llm
+from app.agent.smalltalk import SMALLTALK, compose_reply, refusal_text, smalltalk_kind
 from app.agent.state import AgentState, Finding
 from app.agent.tools import ToolContext, registry
 from app.core.config import get_settings
+from app.db.base import session_scope
 from app.guard.citation import CitationCheck, check_answer, parse_citations
 from app.rag.retriever import RetrievedChunk, retrieve
 
@@ -49,6 +51,11 @@ def route(state: AgentState) -> str:
     settings = get_settings()
     if not state.get("answer"):
         if not state.get("plan"):
+            # A greeting or "who are you" is not a retrieval problem; sending it
+            # through plan/dispatch/worker is how "你好" turned into a cited
+            # paragraph about RRF that then had to be refused.
+            if smalltalk_kind(state.get("question") or ""):
+                return "identity"
             return "plan"
         if not state.get("findings"):
             return "dispatch"
@@ -62,6 +69,43 @@ def route(state: AgentState) -> str:
     if state.get("attempts", 0) <= settings.citation_max_retry:
         return "synthesize"
     return "finalize"
+
+
+def _kb_name(kb_id: str) -> str | None:
+    """Best-effort lookup: the reply should still render if the database is away."""
+    if not kb_id:
+        return None
+    try:
+        from app.db.models import KnowledgeBase
+
+        with session_scope() as session:
+            kb = session.get(KnowledgeBase, kb_id)
+            return kb.name if kb is not None else None
+    except Exception:  # noqa: BLE001 - never let a greeting fail on a query
+        log.warning("could not read the knowledge base name for %s", kb_id)
+        return None
+
+
+def _shards(text: str, size: int = 14) -> list[str]:
+    return [text[i : i + size] for i in range(0, len(text), size)]
+
+
+async def identity(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+    """Answer greetings and identity questions without touching the corpus."""
+    kind = smalltalk_kind(state.get("question") or "") or "greeting"
+    _emit(config, "step.started", {"node": "identity", "note": "自我介绍，不检索知识库"})
+    text = compose_reply(kind, _kb_name(state.get("kb_id") or ""))
+    for piece in _shards(text):
+        _emit(config, "token", {"text": piece})
+    return {
+        "answer": text,
+        "answer_valid": True,
+        "citations": [],
+        "violations": [],
+        "attempts": 1,
+        "kind": kind,
+        "confidence": 1.0,
+    }
 
 
 async def plan(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
@@ -236,6 +280,7 @@ async def finalize(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     settings = get_settings()
     contexts = state.get("contexts", [])
     valid = state.get("answer_valid", False)
+    kind = state.get("kind") or "answer"
 
     # Confidence is measured from the answer text, not from the guard's output:
     # the guard-off arm must still report how strong its evidence was, otherwise
@@ -243,12 +288,27 @@ async def finalize(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     cited = parse_citations(state.get("answer") or "")
     used = [contexts[i - 1] for i in cited if 1 <= i <= len(contexts)]
     confidence = max((max(0.0, min(1.0, ctx.scores.get("rerank", 0.0))) for ctx in used), default=0.0)
-    refused = (not valid) or (settings.guard_enabled and confidence < settings.low_confidence_threshold)
+    if kind in SMALLTALK:
+        # Nothing to refuse: there is no claim about the corpus to support.
+        confidence, refused = 1.0, False
+    else:
+        refused = (not valid) or (
+            settings.guard_enabled and confidence < settings.low_confidence_threshold
+        )
+
+    answer = state.get("answer") or ""
+    if refused and kind != "identity":
+        # The streamed draft is unsupported text. Showing it with a "已拒答"
+        # badge next to it still shows the model's guess — replace the body.
+        answer = refusal_text()
+        _emit(config, "answer.replaced", {"answer": answer, "reason": "no_support"})
 
     _emit(
         config,
         "run.completed",
         {
+            "answer": answer,
+            "kind": kind,
             "refused": refused,
             "confidence": round(confidence, 3),
             "citations": [
@@ -265,12 +325,18 @@ async def finalize(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
             "contexts_used": len(used),
         },
     )
-    return {"confidence": round(confidence, 3), "refused": refused}
+    return {
+        "answer": answer,
+        "confidence": round(confidence, 3),
+        "refused": refused,
+        "citations": [] if refused else state.get("citations", []),
+    }
 
 
 def build_graph():
     graph = StateGraph(AgentState)
     graph.add_node("supervisor", supervisor)
+    graph.add_node("identity", identity)
     graph.add_node("plan", plan)
     graph.add_node("dispatch", dispatch)
     graph.add_node("worker", worker)
@@ -282,12 +348,14 @@ def build_graph():
         "supervisor",
         route,
         {
+            "identity": "identity",
             "plan": "plan",
             "dispatch": "dispatch",
             "synthesize": "synthesize",
             "finalize": "finalize",
         },
     )
+    graph.add_edge("identity", "finalize")
     graph.add_edge("plan", "supervisor")
     graph.add_conditional_edges("dispatch", fan_out, ["worker"])
     graph.add_edge("worker", "supervisor")

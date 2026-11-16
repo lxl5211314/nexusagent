@@ -10,6 +10,7 @@ WORKDIR /srv
 
 COPY pyproject.toml ./
 COPY app ./app
+COPY data/samples ./data/samples
 RUN pip install --upgrade pip && pip install .
 
 RUN mkdir -p /data/uploads
@@ -19,4 +20,5 @@ EXPOSE 8017
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8017/health').status==200 else 1)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8017"]
+# Seed the bundled sample KB on first start (idempotent), then serve.
+CMD ["sh", "-c", "python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8017"]

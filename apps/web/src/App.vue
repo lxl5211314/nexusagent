@@ -383,6 +383,13 @@ function stepMark(status) {
   return '·'
 }
 
+// Small talk is answered without evidence, so it gets a label instead of a
+// confidence score — a greeting is not a claim about the corpus.
+const KIND_COPY = { greeting: '问候', identity: '自我介绍', thanks: '致谢' }
+function kindLabel(kind) {
+  return KIND_COPY[kind] || '说明'
+}
+
 function isExternal(citation) {
   return (citation.doc_id || '').startsWith('mcp:') || citation.heading === '外部工具'
 }
@@ -400,7 +407,7 @@ function askExample(question) {
 }
 
 function newHolder() {
-  return { role: 'assistant', text: '', raw: '', steps: [], citations: [], refused: false, t0: Date.now(), ms: null }
+  return { role: 'assistant', text: '', raw: '', steps: [], citations: [], refused: false, kind: 'answer', t0: Date.now(), ms: null }
 }
 
 // Maps the engine's SSE contract onto the view model. The backend emits
@@ -444,6 +451,12 @@ function applyEvent(holder, type, obj) {
     holder.raw += obj.text || ''
     holder.text = stripMd(holder.raw)
     currentAnswer.value = holder.text
+  } else if (type === 'answer.replaced') {
+    // A refused answer streams as a draft first; the engine then replaces the
+    // body because that draft had no supporting chunk behind it.
+    holder.raw = obj.answer || ''
+    holder.text = stripMd(holder.raw)
+    currentAnswer.value = holder.text
   } else if (type === 'run.completed') {
     for (const s of holder.steps) if (s.status === 'running') s.status = 'done'
     currentSteps.value = holder.steps.slice()
@@ -451,11 +464,12 @@ function applyEvent(holder, type, obj) {
     holder.text = stripMd(holder.raw)
     holder.citations = obj.citations || []
     holder.refused = !!obj.refused
+    holder.kind = obj.kind || 'answer'
     holder.confidence = obj.confidence ?? null
     currentAnswer.value = holder.text
     currentCitations.value = holder.citations
     currentRefused.value = holder.refused
-    currentConfidence.value = obj.confidence ?? null
+    currentConfidence.value = holder.kind === 'identity' ? null : obj.confidence ?? null
     runStatus.value = 'completed'
   } else if (type === 'run.failed') {
     holder.text = holder.text || `处理失败：${obj.error || ''}`
@@ -683,6 +697,7 @@ onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory(); refreshOrg(
             <span class="avatar" :class="m.role">{{ m.role==='user'?'你':'N' }}</span>
             <span v-if="m.role!=='user'">NexusAgent</span>
             <span v-if="m.refused" class="tag warn">已拒答</span>
+            <span v-else-if="m.kind && m.kind !== 'answer'" class="tag">{{ kindLabel(m.kind) }}</span>
             <span v-if="m.role==='assistant' && m.ms" class="tag quiet">{{ (m.ms/1000).toFixed(1) }}s</span>
           </div>
           <div class="bubble">{{ m.text || (running && i===messages.length-1 ? '…' : '') }}</div>
@@ -698,7 +713,7 @@ onMounted(() => { refreshKbs(); refreshBackends(); refreshHistory(); refreshOrg(
               <span v-if="s.detail" class="step-detail">{{ s.detail }}</span>
             </div>
           </div>
-          <div class="evidence" v-if="m.role==='assistant' && (m.citations?.length || m.confidence!=null)">
+          <div class="evidence" v-if="!m.refused && m.role==='assistant' && (m.citations?.length || (m.confidence!=null && m.kind==='answer'))">
             <span v-if="m.confidence!=null" class="tag score">
               置信度 {{ m.confidence.toFixed(2) }}
             </span>
