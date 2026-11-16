@@ -53,7 +53,21 @@ def create_app() -> FastAPI:
     app.include_router(org_routes.router, prefix="/api")
 
     if STATIC_DIR.exists():
-        app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="web")
+
+        class NoCacheHTML(StaticFiles):
+            """index.html 引用的产物名带哈希，缓存住旧的会白屏，所以每次都回源。"""
+
+            async def get_response(self, path, scope):
+                response = await super().get_response(path, scope)
+                if path in ("", ".", "index.html"):
+                    response.headers["cache-control"] = "no-store"
+                return response
+
+        app.mount(
+            "/",
+            NoCacheHTML(directory=str(STATIC_DIR), html=True),
+            name="web",
+        )
 
     return app
 
